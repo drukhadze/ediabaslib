@@ -45,6 +45,16 @@ Test connection:
 - BlueFlashCmd.exe identify
 - Dump flash: BlueFlashCmd.exe dump <filename_without_extension>
 
+Changing a parameter:
+---------------------
+- Dump current settings:
+pscli dump <xxx.psr>
+- Create merge file merge.psr with new settings (e.g. clock 13Mhz):
+// PSKEY_ANA_FREQ
+&01fe = 32c8
+- Merge settings:
+pscli merge <merge.psr>
+
 Programming:
 ------------
 - BlueFlashCmd.exe <filename_without_extension>
@@ -61,6 +71,7 @@ Compiling:
 - Special setting in original file:
   Bootmode none: Host interface(PSKEY_HOST_INTERFACE)=UART link running BCSP
   Bootmode 1: Host interface(PSKEY_HOST_INTERFACE)=VM access to UART
+  Always set bootmode 1 first, otherwise access to the chip is impossible afterwards!
 - Compile and flash: compile.bat flash
 - Clean: compile.bat clean
 - Build: compile.bat build

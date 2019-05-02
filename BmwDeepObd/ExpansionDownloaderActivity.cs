@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -28,10 +29,10 @@ namespace BmwDeepObd
     public class ExpansionDownloaderActivity : AppCompatActivity, IDownloaderClient
     {
 #if DEBUG
-        static readonly string Tag = typeof(ExpansionDownloaderActivity).FullName;
+        private static readonly string Tag = typeof(ExpansionDownloaderActivity).FullName;
 #endif
-        private const int ObbFileSize = 179021968;
-        private static readonly byte[] ObbMd5 = { 0xF4, 0xD3, 0xD9, 0xC1, 0x1D, 0x50, 0x51, 0x9F, 0xCE, 0xCD, 0x95, 0xF0, 0xFF, 0xC2, 0xB9, 0x57 };
+        private const int ObbFileSize = 262591040;
+        private static readonly byte[] ObbMd5 = { 0x52, 0xC6, 0x7D, 0xFC, 0x4F, 0x9D, 0x5E, 0x4A, 0x72, 0xAC, 0x27, 0x15, 0xBD, 0xDA, 0x9B, 0xD2 };
         private const int RequestPermissionExternalStorage = 0;
         private readonly string[] _permissionsExternalStorage =
         {
@@ -488,6 +489,10 @@ namespace BmwDeepObd
 
             RunOnUiThread(() => 
             {
+                if (!_activityActive)
+                {
+                    return;
+                }
                 _progressBar.Indeterminate = false;
                 OnDownloadProgress(new DownloadProgressInfo(ObbFileSize, ObbFileSize, 0, 0));
                 _pauseButton.Visibility = ViewStates.Visible;
@@ -671,6 +676,10 @@ namespace BmwDeepObd
         {
             if (_permissionsExternalStorage.All(permisson => ContextCompat.CheckSelfPermission(this, permisson) == Permission.Granted))
             {
+                if (!_activityActive)
+                {
+                    return;
+                }
                 StoragePermissonGranted();
                 return;
             }
@@ -697,13 +706,58 @@ namespace BmwDeepObd
 
                 if (!IsFromGooglePlay())
                 {
+                    PackageInfo packageInfo = PackageManager.GetPackageInfo(PackageName, 0);
+                    int packageVersion = 0;
+                    if (packageInfo != null)
+                    {
+                        packageVersion = packageInfo.VersionCode;
+                    }
+                    string obbFileName = string.Format(CultureInfo.InvariantCulture, "main.{0}.{1}.obb", packageVersion, ActivityCommon.AppNameSpace);
+
+                    Java.IO.File[] obbDirs;
+                    // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
+                    if (Build.VERSION.SdkInt >= BuildVersionCodes.Kitkat)
+                    {
+                        obbDirs = GetObbDirs();
+                    }
+                    else
+                    {
+                        obbDirs = new[] { ObbDir };
+                    }
+
+                    System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                    foreach (Java.IO.File dir in obbDirs)
+                    {
+                        if (dir != null && !string.IsNullOrEmpty(dir.AbsolutePath))
+                        {
+                            if (sb.Length > 0)
+                            {
+                                sb.AppendLine();
+                            }
+                            sb.Append(@"'");
+                            sb.Append(dir.AbsolutePath);
+                            sb.Append(@"'");
+                        }
+                    }
+
+                    string obbDirsName = sb.ToString();
+                    if (string.IsNullOrEmpty(obbDirsName))
+                    {
+                        obbDirsName = "-";
+                    }
+
+                    string message = string.Format(CultureInfo.InvariantCulture, GetString(Resource.String.exp_down_obb_missing), obbFileName, obbDirsName);
                     AlertDialog alertDialog = new AlertDialog.Builder(this)
-                        .SetMessage(Resource.String.exp_down_obb_missing)
+                        .SetMessage(message)
                         .SetTitle(Resource.String.alert_title_error)
                         .SetNeutralButton(Resource.String.button_ok, (s, e) => { })
                         .Show();
                     alertDialog.DismissEvent += (sender, args) =>
                     {
+                        if (!_activityActive)
+                        {
+                            return;
+                        }
                         Finish();
                     };
                     return;

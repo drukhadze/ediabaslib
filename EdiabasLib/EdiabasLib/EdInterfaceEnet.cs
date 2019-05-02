@@ -396,8 +396,8 @@ namespace EdiabasLib
                 }
                 TcpClientWithTimeout.ExecuteNetworkCommand(() =>
                 {
-                    TcpDiagClient = new TcpClientWithTimeout(TcpHostIp, DiagnosticPort, ConnectTimeout).Connect();
-                }, ConnManager);
+                    TcpDiagClient = new TcpClientWithTimeout(TcpHostIp, DiagnosticPort, ConnectTimeout,true).Connect();
+                }, ConnManager, true);
                 TcpDiagStream = TcpDiagClient.GetStream();
                 TcpDiagRecLen = 0;
                 LastTcpDiagRecTime = DateTime.MinValue.Ticks;
@@ -641,7 +641,7 @@ namespace EdiabasLib
                                                 TcpClientWithTimeout.ExecuteNetworkCommand(() =>
                                                 {
                                                     UdpSocket.SendTo(UdpIdentReq, ipUdpIdent);
-                                                }, ConnManager);
+                                                }, ConnManager, true);
                                                 broadcastSend = true;
                                             }
                                             catch (Exception)
@@ -661,7 +661,7 @@ namespace EdiabasLib
                         if (adapter.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
                         {
                             System.Net.NetworkInformation.IPInterfaceProperties properties = adapter.GetIPProperties();
-                            if (properties.UnicastAddresses != null)
+                            if (properties?.UnicastAddresses != null)
                             {
                                 foreach (System.Net.NetworkInformation.UnicastIPAddressInformation ipAddressInfo in properties.UnicastAddresses)
                                 {
@@ -713,7 +713,7 @@ namespace EdiabasLib
                         TcpClientWithTimeout.ExecuteNetworkCommand(() =>
                         {
                             UdpSocket.SendTo(UdpIdentReq, ipUdpIdent);
-                        }, ConnManager);
+                        }, ConnManager, true);
                         broadcastSend = true;
                     }
                     catch (Exception)
@@ -866,8 +866,8 @@ namespace EdiabasLib
                 }
                 TcpClientWithTimeout.ExecuteNetworkCommand(() =>
                 {
-                    TcpControlClient = TcpDiagClient = new TcpClientWithTimeout(TcpHostIp, ControlPort, ConnectTimeout).Connect();
-                }, ConnManager);
+                    TcpControlClient = TcpDiagClient = new TcpClientWithTimeout(TcpHostIp, ControlPort, ConnectTimeout, true).Connect();
+                }, ConnManager, true);
                 TcpControlStream = TcpControlClient.GetStream();
             }
             catch (Exception)

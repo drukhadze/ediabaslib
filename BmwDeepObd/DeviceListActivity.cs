@@ -30,7 +30,6 @@ using Android.Support.V7.App;
 using Android.Views;
 using Android.Widget;
 using EdiabasLib;
-using Java.Util;
 using Android.Text.Method;
 
 namespace BmwDeepObd
@@ -71,11 +70,14 @@ namespace BmwDeepObd
             DeleteDevice,       // delete device
         }
 
-        private static readonly UUID SppUuid = UUID.FromString("00001101-0000-1000-8000-00805F9B34FB");
+        private static readonly Java.Util.UUID SppUuid = Java.Util.UUID.FromString("00001101-0000-1000-8000-00805F9B34FB");
         private static readonly long TickResolMs = Stopwatch.Frequency / 1000;
         private const int ResponseTimeout = 1000;
 
         // Return Intent extra
+#if DEBUG
+        private static readonly string Tag = typeof(DeviceListActivity).FullName;
+#endif
         public const string ExtraAppDataDir = "app_data_dir";
         public const string ExtraDeviceName = "device_name";
         public const string ExtraDeviceAddress = "device_address";
@@ -83,12 +85,16 @@ namespace BmwDeepObd
 
         // Member fields
         private BluetoothAdapter _btAdapter;
+        private Timer _deviceUpdateTimer;
         private static ArrayAdapter<string> _pairedDevicesArrayAdapter;
         private static ArrayAdapter<string> _newDevicesArrayAdapter;
         private Receiver _receiver;
-        private AlertDialog _altertInfoDialog;
+        private AlertDialog _alertInfoDialog;
+        private ProgressBar _progressBar;
         private Button _scanButton;
         private ActivityCommon _activityCommon;
+        private bool _mtcErrorDisplayed;
+        private bool _mtcOffline;
         private string _appDataDir;
         private readonly StringBuilder _sbLog = new StringBuilder();
         private readonly AutoResetEvent _connectedEvent = new AutoResetEvent(false);
@@ -120,10 +126,17 @@ namespace BmwDeepObd
             },
             (context, intent) =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 if (intent != null && intent.Action == GlobalBroadcastReceiver.NotificationBroadcastAction)
                 {
                     if (intent.HasExtra(GlobalBroadcastReceiver.BtScanFinished))
                     {
+#if DEBUG
+                        Android.Util.Log.Info(Tag, "BtScanFinished");
+#endif
                         ShowScanState(false);
                     }
                 }
@@ -132,6 +145,7 @@ namespace BmwDeepObd
 
             _appDataDir = Intent.GetStringExtra(ExtraAppDataDir);
 
+            _progressBar = FindViewById<ProgressBar>(Resource.Id.progress_bar);
             // Initialize the button to perform device discovery
             _scanButton = FindViewById<Button>(Resource.Id.button_scan);
             _scanButton.Click += (sender, e) =>
@@ -208,7 +222,37 @@ namespace BmwDeepObd
         protected override void OnResume()
         {
             base.OnResume();
-            UpdatePairedDevices();
+            if (_activityCommon.MtcBtService)
+            {
+                if (_deviceUpdateTimer == null)
+                {
+                    _deviceUpdateTimer = new Timer(state =>
+                    {
+                        RunOnUiThread(() =>
+                        {
+                            if (_activityCommon == null)
+                            {
+                                return;
+                            }
+                            UpdateMtcDevices();
+                        });
+                    }, null, 1000, 5000);
+                }
+            }
+            else
+            {
+                UpdatePairedDevices();
+            }
+        }
+
+        protected override void OnPause()
+        {
+            base.OnPause();
+            if (_deviceUpdateTimer != null)
+            {
+                _deviceUpdateTimer.Dispose();
+                _deviceUpdateTimer = null;
+            }
         }
 
         protected override void OnStop()
@@ -294,6 +338,9 @@ namespace BmwDeepObd
             _newDevicesArrayAdapter.Clear();
             if (!_activityCommon.MtcBtServiceBound)
             {
+#if DEBUG
+                Android.Util.Log.Info(Tag, "UpdateMtcDevices: Service not bound");
+#endif
                 return;
             }
             MtcServiceConnection mtcServiceConnection = _activityCommon.MtcServiceConnection;
@@ -301,38 +348,103 @@ namespace BmwDeepObd
             {
                 FindViewById<View>(Resource.Id.layout_new_devices).Visibility = ViewStates.Visible;
 
-                int offset = mtcServiceConnection.ApiVersion < 2 ? 0 : 1;
+                sbyte btState = mtcServiceConnection.GetBtState();
+                bool autoConnect = mtcServiceConnection.GetAutoConnect();
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("UpdateMtcDevices: api={0}, time={1:yyyy-MM-dd HH:mm:ss}", mtcServiceConnection.ApiVersion, DateTime.Now));
+                Android.Util.Log.Info(Tag, string.Format("BtState: {0}", btState));
+                Android.Util.Log.Info(Tag, string.Format("AutoConnect: {0}", autoConnect));
+#endif
+                bool oldOffline = _mtcOffline;
+                _mtcOffline = !autoConnect && btState == 0;
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("MTC offline: {0}", _mtcOffline));
+#endif
+                if (_mtcOffline)
+                {
+                    if (!_mtcErrorDisplayed)
+                    {
+                        _mtcErrorDisplayed = true;
+                        _activityCommon.ShowAlert(GetString(Resource.String.bt_mtc_service_error), Resource.String.alert_title_warning);
+                    }
+                    UpdatePairedDevices();
+                    ShowScanState(false);
+                    return;
+                }
+
+                if (oldOffline != _mtcOffline)
+                {
+                    ShowScanState(false);
+                }
+
                 long nowDevAddr = mtcServiceConnection.GetNowDevAddr();
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("NowDevAddr: {0}", nowDevAddr));
+#endif
                 string nowDevAddrString = string.Format(CultureInfo.InvariantCulture, "{0:X012}", nowDevAddr);
                 IList<string> deviceList = mtcServiceConnection.GetDeviceList();
                 IList<string> matchList = mtcServiceConnection.GetMatchList();
-                foreach (string device in matchList)
+                int offset = mtcServiceConnection.ApiVersion < 2 ? 0 : 1;
+
+                if (matchList != null)
                 {
-                    if (ExtractMtcDeviceInfo(offset, device, out string name, out string address))
+                    foreach (string device in matchList)
                     {
-                        string mac = address.Replace(":", string.Empty);
-                        if (string.Compare(mac, nowDevAddrString, StringComparison.OrdinalIgnoreCase) == 0)
+                        if (string.IsNullOrEmpty(device))
                         {
-                            name += " " + GetString(Resource.String.bt_device_connected);
+                            continue;
                         }
-                        _pairedDevicesArrayAdapter.Add(name + "\n" + address);
+#if DEBUG
+                        Android.Util.Log.Info(Tag, string.Format("MatchList: device={0}", device));
+#endif
+                        if (ExtractMtcDeviceInfo(offset, device, out string name, out string address))
+                        {
+#if DEBUG
+                            Android.Util.Log.Info(Tag, string.Format("Extracted name={0}, address={1}", name, address));
+#endif
+                            string mac = address.Replace(":", string.Empty);
+                            if (string.Compare(mac, nowDevAddrString, StringComparison.OrdinalIgnoreCase) == 0)
+                            {
+                                name += " " + GetString(Resource.String.bt_device_connected);
+                            }
+                            _pairedDevicesArrayAdapter.Add(name + "\n" + address);
+                        }
                     }
                 }
-                foreach (string device in deviceList)
+
+                if (deviceList != null)
                 {
-                    if (ExtractMtcDeviceInfo(offset, device, out string name, out string address))
+                    foreach (string device in deviceList)
                     {
-                        _newDevicesArrayAdapter.Add(name + "\n" + address);
+                        if (string.IsNullOrEmpty(device))
+                        {
+                            continue;
+                        }
+#if DEBUG
+                        Android.Util.Log.Info(Tag, string.Format("DeviceList: device={0}", device));
+#endif
+                        if (ExtractMtcDeviceInfo(offset, device, out string name, out string address))
+                        {
+#if DEBUG
+                            Android.Util.Log.Info(Tag, string.Format("Extracted name={0}, address={1}", name, address));
+#endif
+                            _newDevicesArrayAdapter.Add(name + "\n" + address);
+                        }
                     }
-                }
-                if (_newDevicesArrayAdapter.Count == 0)
-                {
-                    _newDevicesArrayAdapter.Add(Resources.GetText(Resource.String.none_found));
+                    if (_newDevicesArrayAdapter.Count == 0)
+                    {
+                        _newDevicesArrayAdapter.Add(Resources.GetText(Resource.String.none_found));
+                    }
                 }
             }
-            catch (Exception)
+#pragma warning disable 168
+            catch (Exception ex)
+#pragma warning restore 168
             {
                 // ignored
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("UpdateMtcDevices exception: {0}", ex.Message));
+#endif
             }
         }
 
@@ -396,15 +508,23 @@ namespace BmwDeepObd
         /// <param name="enabled">True if scanning is enabled</param>
         private void ShowScanState(bool enabled)
         {
+            if (_activityCommon.MtcBtServiceBound && _mtcOffline)
+            {
+                _progressBar.Visibility = ViewStates.Invisible;
+                SetTitle(Resource.String.select_device);
+                _scanButton.Enabled = false;
+                return;
+            }
+
             if (enabled)
             {
-                FindViewById<ProgressBar>(Resource.Id.progress_bar).Visibility = ViewStates.Visible;
+                _progressBar.Visibility = ViewStates.Visible;
                 SetTitle(Resource.String.scanning);
                 _scanButton.Enabled = false;
             }
             else
             {
-                FindViewById<ProgressBar>(Resource.Id.progress_bar).Visibility = ViewStates.Invisible;
+                _progressBar.Visibility = ViewStates.Invisible;
                 SetTitle(Resource.String.select_device);
                 _scanButton.Enabled = true;
             }
@@ -598,20 +718,24 @@ namespace BmwDeepObd
                         {
                             if (_activityCommon.MtcBtService)
                             {
-                                _altertInfoDialog = new AlertDialog.Builder(this)
+                                _alertInfoDialog = new AlertDialog.Builder(this)
                                     .SetNeutralButton(Resource.String.button_ok, (sender, args) => { })
                                     .SetCancelable(true)
                                     .SetMessage(Resource.String.adapter_connection_mtc_failed)
                                     .SetTitle(Resource.String.alert_title_error)
                                     .Show();
-                                _altertInfoDialog.DismissEvent += (sender, args) =>
+                                _alertInfoDialog.DismissEvent += (sender, args) =>
                                 {
-                                    _altertInfoDialog = null;
+                                    if (_activityCommon == null)
+                                    {
+                                        return;
+                                    }
+                                    _alertInfoDialog = null;
                                 };
                                 break;
                             }
 
-                            _altertInfoDialog = new AlertDialog.Builder(this)
+                            _alertInfoDialog = new AlertDialog.Builder(this)
                                 .SetPositiveButton(Resource.String.button_yes, (sender, args) =>
                                 {
                                     ReturnDeviceType(deviceAddress + ";" + EdBluetoothInterface.RawTag, deviceName);
@@ -623,9 +747,13 @@ namespace BmwDeepObd
                                 .SetMessage(Resource.String.adapter_connection_failed)
                                 .SetTitle(Resource.String.alert_title_error)
                                 .Show();
-                            _altertInfoDialog.DismissEvent += (sender, args) =>
+                            _alertInfoDialog.DismissEvent += (sender, args) =>
                             {
-                                _altertInfoDialog = null;
+                                if (_activityCommon == null)
+                                {
+                                    return;
+                                }
+                                _alertInfoDialog = null;
                             };
                             break;
                         }
@@ -634,27 +762,27 @@ namespace BmwDeepObd
                         {
                             if (_activityCommon.MtcBtService)
                             {
-                                _altertInfoDialog = new AlertDialog.Builder(this)
+                                _alertInfoDialog = new AlertDialog.Builder(this)
                                     .SetNeutralButton(Resource.String.button_ok, (sender, args) => { })
                                     .SetCancelable(true)
                                     .SetMessage(Resource.String.adapter_connection_mtc_failed)
                                     .SetTitle(Resource.String.alert_title_error)
                                     .Show();
-                                _altertInfoDialog.DismissEvent += (sender, args) =>
+                                _alertInfoDialog.DismissEvent += (sender, args) =>
                                 {
                                     if (_activityCommon == null)
                                     {
                                         return;
                                     }
-                                    _altertInfoDialog = null;
+                                    _alertInfoDialog = null;
                                     _activityCommon.RequestSendMessage(_appDataDir, _sbLog.ToString(),
-                                        PackageManager.GetPackageInfo(PackageName, 0), GetType(), (o, eventArgs) => { });
+                                        GetType(), (o, eventArgs) => { });
                                 };
                                 break;
                             }
 
                             bool yesSelected = false;
-                            _altertInfoDialog = new AlertDialog.Builder(this)
+                            _alertInfoDialog = new AlertDialog.Builder(this)
                                 .SetPositiveButton(Resource.String.button_yes, (sender, args) =>
                                 {
                                     yesSelected = true;
@@ -666,16 +794,20 @@ namespace BmwDeepObd
                                 .SetMessage(Resource.String.unknown_adapter_type)
                                 .SetTitle(Resource.String.alert_title_error)
                                 .Show();
-                            _altertInfoDialog.DismissEvent += (sender, args) =>
+                            _alertInfoDialog.DismissEvent += (sender, args) =>
                             {
                                 if (_activityCommon == null)
                                 {
                                     return;
                                 }
-                                _altertInfoDialog = null;
+                                _alertInfoDialog = null;
                                 _activityCommon.RequestSendMessage(_appDataDir, _sbLog.ToString(),
-                                    PackageManager.GetPackageInfo(PackageName, 0), GetType(), (o, eventArgs) =>
+                                    GetType(), (o, eventArgs) =>
                                     {
+                                        if (_activityCommon == null)
+                                        {
+                                            return;
+                                        }
                                         if (yesSelected)
                                         {
                                             ReturnDeviceType(deviceAddress + ";" + EdBluetoothInterface.RawTag, deviceName);
@@ -687,7 +819,7 @@ namespace BmwDeepObd
 
                         case AdapterType.Elm327:
                         {
-                            _altertInfoDialog = new AlertDialog.Builder(this)
+                            _alertInfoDialog = new AlertDialog.Builder(this)
                                 .SetNeutralButton(Resource.String.button_ok, (sender, args) =>
                                 {
                                     ReturnDeviceType(deviceAddress + ";" + EdBluetoothInterface.Elm327Tag, deviceName);
@@ -696,11 +828,11 @@ namespace BmwDeepObd
                                 .SetMessage(ActivityCommon.FromHtml(GetString(Resource.String.adapter_elm_replacement)))
                                 .SetTitle(Resource.String.alert_title_info)
                                 .Show();
-                            _altertInfoDialog.DismissEvent += (sender, args) =>
+                            _alertInfoDialog.DismissEvent += (sender, args) =>
                             {
-                                _altertInfoDialog = null;
+                                _alertInfoDialog = null;
                             };
-                            TextView messageView = _altertInfoDialog.FindViewById<TextView>(Android.Resource.Id.Message);
+                            TextView messageView = _alertInfoDialog.FindViewById<TextView>(Android.Resource.Id.Message);
                             if (messageView != null)
                             {
                                 messageView.MovementMethod = new LinkMovementMethod();
@@ -754,16 +886,16 @@ namespace BmwDeepObd
 
                             builder.SetCancelable(true);
                             builder.SetMessage(ActivityCommon.FromHtml(message));
-                            _altertInfoDialog = builder.Show();
+                            _alertInfoDialog = builder.Show();
 
-                            _altertInfoDialog.DismissEvent += (sender, args) =>
+                            _alertInfoDialog.DismissEvent += (sender, args) =>
                             {
                                 if (_activityCommon == null)
                                 {
                                     return;
                                 }
-                                _altertInfoDialog = null;
-                                _activityCommon.RequestSendMessage(_appDataDir, _sbLog.ToString(), PackageManager.GetPackageInfo(PackageName, 0), GetType(), (o, eventArgs) =>
+                                _alertInfoDialog = null;
+                                _activityCommon.RequestSendMessage(_appDataDir, _sbLog.ToString(), GetType(), (o, eventArgs) =>
                                 {
                                     if (yesSelected)
                                     {
@@ -771,7 +903,7 @@ namespace BmwDeepObd
                                     }
                                 });
                             };
-                            TextView messageView = _altertInfoDialog.FindViewById<TextView>(Android.Resource.Id.Message);
+                            TextView messageView = _alertInfoDialog.FindViewById<TextView>(Android.Resource.Id.Message);
                             if (messageView != null)
                             {
                                 messageView.MovementMethod = new LinkMovementMethod();
@@ -781,7 +913,7 @@ namespace BmwDeepObd
 
                         case AdapterType.Custom:
                         case AdapterType.CustomUpdate:
-                            _altertInfoDialog = new AlertDialog.Builder(this)
+                            _alertInfoDialog = new AlertDialog.Builder(this)
                                 .SetPositiveButton(Resource.String.button_yes, (sender, args) =>
                                 {
                                     ReturnDeviceType(deviceAddress, deviceName, true);
@@ -794,9 +926,13 @@ namespace BmwDeepObd
                                 .SetMessage(adapterType == AdapterType.CustomUpdate ? Resource.String.adapter_fw_update : Resource.String.adapter_cfg_required)
                                 .SetTitle(Resource.String.alert_title_info)
                                 .Show();
-                            _altertInfoDialog.DismissEvent += (sender, args) =>
+                            _alertInfoDialog.DismissEvent += (sender, args) =>
                             {
-                                _altertInfoDialog = null;
+                                if (_activityCommon == null)
+                                {
+                                    return;
+                                }
+                                _alertInfoDialog = null;
                             };
                             break;
 
@@ -1293,7 +1429,7 @@ namespace BmwDeepObd
                     return;
                 }
 
-                if (_activityCommon.MtcBtServiceBound)
+                if (_activityCommon.MtcBtServiceBound && !_mtcOffline)
                 {
                     SelectMtcDeviceAction(name, address, paired);
                 }

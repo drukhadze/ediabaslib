@@ -47,6 +47,7 @@ namespace BmwDeepObd
         private TextView _textViewCaptionCpuUsage;
         private CheckBox _checkBoxCheckCpuUsage;
         private CheckBox _checkBoxCheckEcuFiles;
+        private CheckBox _checkBoxOldVagMode;
         private Button _buttonStorageLocation;
         private CheckBox _checkBoxCollectDebugInfo;
         private CheckBox _checkBoxHciSnoopLog;
@@ -102,6 +103,7 @@ namespace BmwDeepObd
             _checkBoxCheckCpuUsage.Visibility = viewStateCpuUsage;
 
             _checkBoxCheckEcuFiles = FindViewById<CheckBox>(Resource.Id.checkBoxCheckEcuFiles);
+            _checkBoxOldVagMode = FindViewById<CheckBox>(Resource.Id.checkBoxOldVagMode);
 
             _buttonStorageLocation = FindViewById<Button>(Resource.Id.buttonStorageLocation);
             _buttonStorageLocation.Click += (sender, args) =>
@@ -129,11 +131,15 @@ namespace BmwDeepObd
 
         protected override void OnDestroy()
         {
-            StoreSettings();
-
             base.OnDestroy();
             _activityCommon.Dispose();
             _activityCommon = null;
+        }
+
+        public override void OnBackPressed()
+        {
+            StoreSettings();
+            base.OnBackPressed();
         }
 
         public override bool OnOptionsItemSelected(IMenuItem item)
@@ -141,6 +147,7 @@ namespace BmwDeepObd
             switch (item.ItemId)
             {
                 case Android.Resource.Id.Home:
+                    StoreSettings();
                     Finish();
                     return true;
             }
@@ -234,6 +241,7 @@ namespace BmwDeepObd
             _checkBoxSendDataBroadcast.Checked = ActivityCommon.SendDataBroadcast;
             _checkBoxCheckCpuUsage.Checked = ActivityCommon.CheckCpuUsage;
             _checkBoxCheckEcuFiles.Checked = ActivityCommon.CheckEcuFiles;
+            _checkBoxOldVagMode.Checked = ActivityCommon.OldVagMode;
             _checkBoxCollectDebugInfo.Checked = ActivityCommon.CollectDebugInfo;
             UpdateDisplay();
         }
@@ -316,6 +324,7 @@ namespace BmwDeepObd
             ActivityCommon.SendDataBroadcast = _checkBoxSendDataBroadcast.Checked;
             ActivityCommon.CheckCpuUsage = _checkBoxCheckCpuUsage.Checked;
             ActivityCommon.CheckEcuFiles = _checkBoxCheckEcuFiles.Checked;
+            ActivityCommon.OldVagMode = _checkBoxOldVagMode.Checked;
             ActivityCommon.CollectDebugInfo = _checkBoxCollectDebugInfo.Checked;
         }
 
@@ -325,11 +334,15 @@ namespace BmwDeepObd
             {
                 return;
             }
-            const int maxLength = 40;
-            string displayName = string.IsNullOrEmpty(_activityCommon.CustomStorageMedia) ? GetString(Resource.String.default_media) : _activityCommon.CustomStorageMedia;
-            if (displayName.Length > maxLength)
+
+            string displayName = GetString(Resource.String.default_media);
+            if (!string.IsNullOrEmpty(_activityCommon.CustomStorageMedia))
             {
-                displayName = "..." + displayName.Substring(displayName.Length - maxLength);
+                string shortName = ActivityCommon.GetTruncatedPathName(_activityCommon.CustomStorageMedia);
+                if (!string.IsNullOrEmpty(shortName))
+                {
+                    displayName = shortName;
+                }
             }
             _buttonStorageLocation.Text = displayName;
 
@@ -358,6 +371,10 @@ namespace BmwDeepObd
             }
             _activityCommon.SelectMedia((s, a) =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 UpdateDisplay();
             });
         }

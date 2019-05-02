@@ -44,6 +44,8 @@ namespace BmwDeepObd
 
             public string Name { get; }
 
+            public string NameOld { get; set; }
+
             public string DisplayName { get; }
 
             public string Type { get; }
@@ -95,6 +97,12 @@ namespace BmwDeepObd
             public bool Selected { get; set; }
         }
 
+        private enum ActivityRequest
+        {
+            RequestVagCoding,
+            RequestVagAdaption,
+        }
+
         enum FormatType
         {
             None,
@@ -108,6 +116,7 @@ namespace BmwDeepObd
         public class InstanceData
         {
             public bool IgnoreFormatSelection { get; set; }
+            public bool ResultAmountWarnShown { get; set; }
         }
 
         public delegate void AcceptDelegate(bool accepted);
@@ -129,7 +138,9 @@ namespace BmwDeepObd
         private InstanceData _instanceData = new InstanceData();
         private InputMethodManager _imm;
         private View _contentView;
+        private TextView _textViewPageNameTitle;
         private EditText _editTextPageName;
+        private TextView _textViewEcuNameTitle;
         private EditText _editTextEcuName;
         private CheckBox _checkBoxDisplayTypeGrid;
         private TextView _textViewFontSizeTitle;
@@ -172,6 +183,11 @@ namespace BmwDeepObd
         private Button _buttonTestFormat;
         private TextView _textViewTestFormatOutput;
         private Button _buttonEdiabasTool;
+        private Button _buttonCoding;
+        private Button _buttonCoding2;
+        private Button _buttonAdaption;
+        private Button _buttonLogin;
+        private Button _buttonSecurityAccess;
         private ActivityCommon _activityCommon;
         private XmlToolActivity.EcuInfo _ecuInfo;
         private JobInfo _selectedJob;
@@ -184,6 +200,8 @@ namespace BmwDeepObd
         private string _traceDir;
         private bool _traceAppend;
         private string _deviceAddress;
+        private string _resultFilterText;
+        private bool _displayEcuInfo;
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
@@ -205,6 +223,12 @@ namespace BmwDeepObd
 
             SetResult(Android.App.Result.Canceled);
 
+            if (IntentEcuInfo == null)
+            {
+                Finish();
+                return;
+            }
+
             _activityCommon = new ActivityCommon(this, () =>
             {
 
@@ -220,10 +244,18 @@ namespace BmwDeepObd
 
             _ecuInfo = IntentEcuInfo;
 
+            _textViewPageNameTitle = FindViewById<TextView>(Resource.Id.textViewPageNameTitle);
+            _textViewPageNameTitle.SetOnTouchListener(this);
+
             _editTextPageName = FindViewById<EditText>(Resource.Id.editTextPageName);
+            _editTextPageName.SetOnTouchListener(this);
             _editTextPageName.Text = _ecuInfo.PageName;
 
+            _textViewEcuNameTitle = FindViewById<TextView>(Resource.Id.textViewEcuNameTitle);
+            _textViewEcuNameTitle.SetOnTouchListener(this);
+
             _editTextEcuName = FindViewById<EditText>(Resource.Id.editTextEcuName);
+            _editTextEcuName.SetOnTouchListener(this);
             _editTextEcuName.Text = _ecuInfo.EcuName;
 
             _checkBoxDisplayTypeGrid = FindViewById<CheckBox>(Resource.Id.checkBoxDisplayTypeGrid);
@@ -233,7 +265,7 @@ namespace BmwDeepObd
                 DisplayTypeSelected();
             };
 
-            _textViewFontSizeTitle  = FindViewById<TextView>(Resource.Id.textViewFontSizeTitle);
+            _textViewFontSizeTitle = FindViewById<TextView>(Resource.Id.textViewFontSizeTitle);
             _spinnerFontSize = FindViewById<Spinner>(Resource.Id.spinnerFontSize);
             _spinnerFontSizeAdapter = new StringObjAdapter(this);
             _spinnerFontSize.Adapter = _spinnerFontSizeAdapter;
@@ -270,6 +302,11 @@ namespace BmwDeepObd
             {
                 int pos = args.Position;
                 JobSelected(pos >= 0 ? _spinnerJobsAdapter.Items[pos] : null);
+                if (_displayEcuInfo)
+                {
+                    DisplayEcuInfo();
+                    _displayEcuInfo = false;
+                }
             };
 
             _layoutJobConfig = FindViewById<LinearLayout>(Resource.Id.layoutJobConfig);
@@ -381,13 +418,100 @@ namespace BmwDeepObd
                 Intent intent = new Intent();
                 intent.PutExtra(ExtraCallEdiabasTool, true);
                 SetResult(Android.App.Result.Ok, intent);
+                StoreResults();
                 Finish();
+            };
+
+            ViewStates vagButtonsVisibility = ActivityCommon.SelectedManufacturer != ActivityCommon.ManufacturerType.Bmw && ActivityCommon.VagUdsActive ?
+                ViewStates.Visible : ViewStates.Gone;
+            _buttonCoding = FindViewById<Button>(Resource.Id.buttonCoding);
+            _buttonCoding.Visibility = vagButtonsVisibility;
+            _buttonCoding.Enabled = _ecuInfo.HasVagCoding();
+            _buttonCoding.Click += (sender, args) =>
+            {
+                StartVagCoding(VagCodingActivity.CodingMode.Coding);
+            };
+
+            bool coding2Enabled = false;
+            if (_ecuInfo.HasVagCoding2())
+            {
+                UdsFileReader.UdsReader udsReader = ActivityCommon.GetUdsReader(_ecuInfo.VagDataFileName);
+                if (udsReader != null)
+                {
+                    List<UdsFileReader.DataReader.DataInfo> dataInfoCodingList = udsReader.DataReader.ExtractDataType(_ecuInfo.VagDataFileName, UdsFileReader.DataReader.DataType.Login);
+                    if (dataInfoCodingList?.Count > 0)
+                    {
+                        coding2Enabled = true;
+                    }
+                }
+            }
+
+            bool adaptionEnabled = false;
+            if (XmlToolActivity.Is1281Ecu(_ecuInfo))
+            {
+                adaptionEnabled = true;
+            }
+            else if (XmlToolActivity.IsUdsEcu(_ecuInfo))
+            {
+                UdsFileReader.UdsReader udsReader = ActivityCommon.GetUdsReader(_ecuInfo.VagUdsFileName);
+                if (udsReader != null)
+                {
+                    List<UdsFileReader.UdsReader.ParseInfoAdp> parseInfoAdaptionList = udsReader.GetAdpParseInfoList(_ecuInfo.VagUdsFileName);
+                    if (parseInfoAdaptionList?.Count > 0)
+                    {
+                        adaptionEnabled = true;
+                    }
+                }
+            }
+            else
+            {
+                if (_ecuInfo.VagSupportedFuncHash != null)
+                {
+                    adaptionEnabled =
+                        _ecuInfo.VagSupportedFuncHash.Contains((UInt64)XmlToolActivity.SupportedFuncType.Adaption) ||
+                        _ecuInfo.VagSupportedFuncHash.Contains((UInt64)XmlToolActivity.SupportedFuncType.AdaptionLong) ||
+                        _ecuInfo.VagSupportedFuncHash.Contains((UInt64)XmlToolActivity.SupportedFuncType.AdaptionLong2);
+                }
+            }
+
+            _buttonCoding2 = FindViewById<Button>(Resource.Id.buttonCoding2);
+            _buttonCoding2.Visibility = vagButtonsVisibility;
+            _buttonCoding2.Enabled = coding2Enabled;
+            _buttonCoding2.Click += (sender, args) =>
+            {
+                StartVagCoding(VagCodingActivity.CodingMode.Coding2);
+            };
+
+            _buttonAdaption = FindViewById<Button>(Resource.Id.buttonAdaption);
+            _buttonAdaption.Visibility = vagButtonsVisibility;
+            _buttonAdaption.Enabled = adaptionEnabled;
+            _buttonAdaption.Click += (sender, args) =>
+            {
+                StartVagAdaption();
+            };
+
+            _buttonLogin = FindViewById<Button>(Resource.Id.buttonLogin);
+            _buttonLogin.Visibility = vagButtonsVisibility;
+            _buttonLogin.Enabled = _ecuInfo.HasVagLogin();
+            _buttonLogin.Click += (sender, args) =>
+            {
+                StartVagCoding(VagCodingActivity.CodingMode.Login);
+            };
+
+            bool authEnabled = !XmlToolActivity.Is1281Ecu(_ecuInfo);
+            _buttonSecurityAccess = FindViewById<Button>(Resource.Id.buttonSecurityAccess);
+            _buttonSecurityAccess.Visibility = vagButtonsVisibility;
+            _buttonSecurityAccess.Enabled = authEnabled;
+            _buttonSecurityAccess.Click += (sender, args) =>
+            {
+                StartVagCoding(VagCodingActivity.CodingMode.SecurityAccess);
             };
 
             _layoutJobConfig.Visibility = ViewStates.Gone;
             UpdateDisplay();
             DisplayTypeSelected();
             ResetTestResult();
+            DisplayEcuInfo();
         }
 
         protected override void OnSaveInstanceState(Bundle outState)
@@ -399,6 +523,7 @@ namespace BmwDeepObd
         protected override void OnStart()
         {
             base.OnStart();
+            _resultFilterText = null;
             if (_activityCommon.MtcBtService)
             {
                 _activityCommon.StartMtcService();
@@ -442,14 +567,61 @@ namespace BmwDeepObd
 
         public override void OnBackPressed()
         {
+            UpdateResultSettings(_selectedResult);
             NoSelectionWarn(accepted =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 if (accepted)
                 {
                     StoreResults();
                     base.OnBackPressed();
                 }
             });
+        }
+
+        protected override void OnActivityResult(int requestCode, Android.App.Result resultCode, Intent data)
+        {
+            switch ((ActivityRequest) requestCode)
+            {
+                case ActivityRequest.RequestVagCoding:
+                case ActivityRequest.RequestVagAdaption:
+                    if (resultCode == Android.App.Result.Ok)
+                    {
+                        Finish();
+                        break;
+                    }
+                    UpdateDisplay();
+                    break;
+            }
+        }
+
+        public override bool OnCreateOptionsMenu(IMenu menu)
+        {
+            var inflater = MenuInflater;
+            inflater.Inflate(Resource.Menu.xml_ecu_tool_menu, menu);
+            IMenuItem menuSearch = menu.FindItem(Resource.Id.action_search);
+            if (menuSearch != null)
+            {
+                menuSearch.SetActionView(new Android.Support.V7.Widget.SearchView(this));
+
+                if (menuSearch.ActionView is Android.Support.V7.Widget.SearchView searchViewV7)
+                {
+                    searchViewV7.QueryTextChange += (sender, e) =>
+                    {
+                        e.Handled = OnQueryTextChange(e.NewText, false);
+                    };
+
+                    searchViewV7.QueryTextSubmit += (sender, e) =>
+                    {
+                        e.Handled = OnQueryTextChange(e.NewText, true);
+                    };
+                }
+            }
+
+            return true;
         }
 
         public override bool OnOptionsItemSelected(IMenuItem item)
@@ -461,6 +633,10 @@ namespace BmwDeepObd
                 case Android.Resource.Id.Home:
                     NoSelectionWarn(accepted =>
                     {
+                        if (_activityCommon == null)
+                        {
+                            return;
+                        }
                         if (accepted)
                         {
                             StoreResults();
@@ -477,11 +653,28 @@ namespace BmwDeepObd
             switch (e.Action)
             {
                 case MotionEventActions.Down:
+                    if (v == _textViewPageNameTitle || v == _editTextPageName ||
+                        v == _textViewEcuNameTitle || v == _editTextEcuName)
+                    {
+                        DisplayEcuInfo();
+                        break;
+                    }
                     UpdateResultSettings(_selectedResult);
                     HideKeyboard();
                     break;
             }
             return false;
+        }
+
+        private bool OnQueryTextChange(string text, bool submit)
+        {
+            _resultFilterText = text;
+            JobSelected(_selectedJob);
+            if (submit)
+            {
+                HideKeyboard();
+            }
+            return true;
         }
 
         public static bool IsVagReadJob(JobInfo job, XmlToolActivity.EcuInfo ecuInfo)
@@ -494,9 +687,9 @@ namespace BmwDeepObd
             {
                 return false;
             }
-            if (ecuInfo.Sgbd.Contains("7000"))
+            if (XmlToolActivity.IsUdsEcu(ecuInfo))
             {
-                return string.Compare(job.Name, XmlToolActivity.JobReadMwUds, StringComparison.OrdinalIgnoreCase) == 0;
+                return string.Compare(job.Name, XmlToolActivity.JobReadS22Uds, StringComparison.OrdinalIgnoreCase) == 0;
             }
             return string.Compare(job.Name, XmlToolActivity.JobReadMwBlock, StringComparison.OrdinalIgnoreCase) == 0;
         }
@@ -509,7 +702,7 @@ namespace BmwDeepObd
                 {
                     return true;
                 }
-                if (string.Compare(job.Name, "Fahrgestellnr_abfragen", StringComparison.OrdinalIgnoreCase) == 0)
+                if (string.Compare(job.Name, XmlToolActivity.JobReadVin, StringComparison.OrdinalIgnoreCase) == 0)
                 {
                     return true;
                 }
@@ -1029,15 +1222,26 @@ namespace BmwDeepObd
             UpdateFormatFields(resultInfo, formatType == FormatType.User);
         }
 
-        private bool AnyResultsSelected()
+        private bool AnyResultsSelected(bool checkGrid)
         {
+            bool gridMode = checkGrid && _ecuInfo.DisplayMode == JobReader.PageInfo.DisplayModeType.Grid;
             foreach (JobInfo jobInfo in _ecuInfo.JobList)
             {
                 if (jobInfo.Selected)
                 {
-                    if (jobInfo.Results.Any(resultInfo => resultInfo.Selected))
+                    if (gridMode)
                     {
-                        return true;
+                        if (jobInfo.Results.Any(resultInfo => resultInfo.Selected && resultInfo.GridType != JobReader.DisplayInfo.GridModeType.Hidden))
+                        {
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        if (jobInfo.Results.Any(resultInfo => resultInfo.Selected))
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -1047,10 +1251,32 @@ namespace BmwDeepObd
 
         private void NoSelectionWarn(AcceptDelegate handler)
         {
-            if (AnyResultsSelected())
+            if (_ecuInfo.NoUpdate)
+            {
+                new AlertDialog.Builder(this)
+                    .SetPositiveButton(Resource.String.button_ok, (sender, args) =>
+                    {
+                        handler(true);
+                    })
+                    .SetMessage(Resource.String.xml_tool_ecu_msg_save_lock)
+                    .SetTitle(Resource.String.alert_title_info)
+                    .Show();
+                return;
+            }
+
+            if (AnyResultsSelected(true))
             {
                 handler(true);
                 return;
+            }
+
+            int resourceId = Resource.String.xml_tool_ecu_msg_no_selection;
+            if (_ecuInfo.DisplayMode == JobReader.PageInfo.DisplayModeType.Grid)
+            {
+                if (AnyResultsSelected(false))
+                {
+                    resourceId = Resource.String.xml_tool_ecu_msg_no_grid_selection;
+                }
             }
             new AlertDialog.Builder(this)
                 .SetPositiveButton(Resource.String.button_yes, (sender, args) =>
@@ -1061,7 +1287,7 @@ namespace BmwDeepObd
                 {
                     handler(false);
                 })
-                .SetMessage(Resource.String.xml_tool_ecu_msg_no_selection)
+                .SetMessage(resourceId)
                 .SetTitle(Resource.String.alert_title_question)
                 .Show();
         }
@@ -1136,8 +1362,8 @@ namespace BmwDeepObd
             _selectedJob = jobInfo;
 
             bool vagReadJob = IsVagReadJob(_selectedJob, _ecuInfo);
-            _checkBoxShowAllResults.Visibility = (ActivityCommon.SelectedManufacturer != ActivityCommon.ManufacturerType.Bmw) && vagReadJob ?
-                ViewStates.Visible : ViewStates.Gone;
+            _checkBoxShowAllResults.Visibility = (ActivityCommon.SelectedManufacturer != ActivityCommon.ManufacturerType.Bmw) &&
+                                                 vagReadJob && !ActivityCommon.VagUdsActive ? ViewStates.Visible : ViewStates.Gone;
 
             ResetTestResult();
             _spinnerJobResultsAdapter.Items.Clear();
@@ -1150,7 +1376,7 @@ namespace BmwDeepObd
                 // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
                 if ((ActivityCommon.SelectedManufacturer != ActivityCommon.ManufacturerType.Bmw) && vagReadJob)
                 {
-                    udsJob = string.Compare(jobInfo.Name, XmlToolActivity.JobReadMwUds, StringComparison.OrdinalIgnoreCase) == 0;
+                    udsJob = string.Compare(jobInfo.Name, XmlToolActivity.JobReadS22Uds, StringComparison.OrdinalIgnoreCase) == 0;
                     List<ResultInfo> showResults = new List<ResultInfo>();
                     if (_checkBoxShowAllResults.Checked && _checkBoxShowAllResults.Visibility == ViewStates.Visible)
                     {
@@ -1172,6 +1398,15 @@ namespace BmwDeepObd
                     {   // ignore binary results
                         continue;
                     }
+
+                    if (!string.IsNullOrEmpty(_resultFilterText))
+                    {
+                        if (result.DisplayName.IndexOf(_resultFilterText, StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            continue;   // filter is not matching
+                        }
+                    }
+
                     _spinnerJobResultsAdapter.Items.Add(result);
                     if (result.Selected && selection < 0)
                     {
@@ -1259,10 +1494,84 @@ namespace BmwDeepObd
             ResultSelected(selection);
         }
 
+        private void DisplayEcuInfo()
+        {
+            if (ActivityCommon.SelectedManufacturer == ActivityCommon.ManufacturerType.Bmw)
+            {
+                return;
+            }
+            if (!ActivityCommon.VagUdsActive)
+            {
+                return;
+            }
+            _textViewJobCommentsTitle.Text = GetString(Resource.String.xml_tool_ecu_job_comments_ecu_info);
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append(string.Format(GetString(Resource.String.xml_tool_ecu_job_comments_ecu_info_addr), _ecuInfo.Address));
+            sb.Append(" ");
+            bool append = false;
+            if (!string.IsNullOrEmpty(_ecuInfo.VagPartNumber))
+            {
+                sb.Append(_ecuInfo.VagPartNumber);
+                append = true;
+            }
+            if (!string.IsNullOrEmpty(_ecuInfo.VagHwPartNumber))
+            {
+                if (append)
+                {
+                    sb.Append(" / ");
+                }
+                sb.Append(_ecuInfo.VagHwPartNumber);
+            }
+            if (!string.IsNullOrEmpty(_ecuInfo.VagSysName))
+            {
+                if (append)
+                {
+                    sb.Append(" / ");
+                }
+                sb.Append(_ecuInfo.VagSysName);
+            }
+
+            if (_ecuInfo.SubSystems != null)
+            {
+                foreach (XmlToolActivity.EcuInfoSubSys subSystem in _ecuInfo.SubSystems)
+                {
+                    sb.Append("\r\n");
+                    sb.Append(string.Format(GetString(Resource.String.xml_tool_ecu_job_comments_ecu_info_subsys), subSystem.SubSysIndex + 1));
+                    sb.Append(" ");
+                    append = false;
+                    if (!string.IsNullOrEmpty(subSystem.VagPartNumber))
+                    {
+                        sb.Append(subSystem.VagPartNumber);
+                        append = true;
+                    }
+                    if (!string.IsNullOrEmpty(subSystem.VagSysName))
+                    {
+                        if (append)
+                        {
+                            sb.Append(" / ");
+                        }
+                        sb.Append(subSystem.VagSysName);
+                        append = true;
+                    }
+                    if (!string.IsNullOrEmpty(subSystem.Name))
+                    {
+                        if (append)
+                        {
+                            sb.Append(" / ");
+                        }
+                        sb.Append(subSystem.Name);
+                    }
+                }
+            }
+            _textViewJobComments.Text = sb.ToString();
+            _displayEcuInfo = true;
+        }
+
         private void ResultSelected(int pos)
         {
             UpdateResultSettings(_selectedResult);  // store old settings
-            if (pos >= 0)
+            if (pos >= 0 && pos < _spinnerJobResultsAdapter.Items.Count)
             {
                 _selectedResult = _spinnerJobResultsAdapter.Items[pos];
                 _textViewResultCommentsTitle.Text = string.Format(GetString(Resource.String.xml_tool_ecu_result_comments), _selectedResult.Name);
@@ -1329,7 +1638,7 @@ namespace BmwDeepObd
             }
         }
 
-        private void ResultCheckChanged()
+        private void ResultCheckChanged(bool isChecked)
         {
             if ((_selectedJob == null) || (_selectedResult == null))
             {
@@ -1337,6 +1646,19 @@ namespace BmwDeepObd
             }
             int selectCount = _selectedJob.Results.Count(resultInfo => resultInfo.Selected);
             bool selectJob = selectCount > 0;
+            if (ActivityCommon.SelectedManufacturer == ActivityCommon.ManufacturerType.Bmw)
+            {
+                bool statMwBlock = string.Compare(_selectedJob.Name, XmlToolActivity.JobReadStatMwBlock, StringComparison.OrdinalIgnoreCase) == 0;
+                bool statBlock = string.Compare(_selectedJob.Name, XmlToolActivity.JobReadStatBlock, StringComparison.OrdinalIgnoreCase) == 0;
+                if ((statMwBlock || statBlock) && isChecked && selectCount > 10)
+                {
+                    if (!_instanceData.ResultAmountWarnShown)
+                    {
+                        _instanceData.ResultAmountWarnShown = true;
+                        _activityCommon.ShowAlert(GetString(Resource.String.xml_tool_result_amount_limit), Resource.String.alert_title_warning);
+                    }
+                }
+            }
             if (_selectedJob.Selected != selectJob)
             {
                 _selectedJob.Selected = selectJob;
@@ -1369,7 +1691,8 @@ namespace BmwDeepObd
             {
                 try
                 {
-                    _ediabas.ResolveSgbdFile(_ecuInfo.Sgbd);
+                    bool udsEcu = XmlToolActivity.IsUdsEcu(_ecuInfo);
+                    ActivityCommon.ResolveSgbdFile(_ediabas, _ecuInfo.Sgbd);
 
                     _ediabas.ArgString = string.Empty;
                     if (_selectedResult.MwTabEntry != null && _ecuInfo.ReadCommand != null)
@@ -1443,9 +1766,28 @@ namespace BmwDeepObd
                                 {
                                     if (resultDict.TryGetValue("ERGEBNIS1WERT", out resultData))
                                     {
-                                        _ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Data type: {0}", resultData.ResType.ToString());
-                                        _ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Format: {0}", _selectedResult.Format ?? "No format");
-                                        resultText = FormatResult(resultData, _selectedResult.Format);
+                                        resultText = string.Empty;
+                                        if (ActivityCommon.VagUdsActive && udsEcu && resultData.OpData.GetType() == typeof(byte[]))
+                                        {
+                                            UdsFileReader.UdsReader udsReader = ActivityCommon.GetUdsReader(_ecuInfo.VagUdsFileName);
+                                            UdsFileReader.UdsReader.ParseInfoMwb parseInfoMwb = udsReader?.GetMwbParseInfo(_ecuInfo.VagUdsFileName, _selectedResult.Name);
+                                            if (parseInfoMwb != null)
+                                            {
+                                                _ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "UniqueId match: {0}", parseInfoMwb.UniqueIdString);
+                                                resultText = parseInfoMwb.DataTypeEntry.ToString(CultureInfo.InvariantCulture, (byte[])resultData.OpData, out double? stringDataValue);
+                                                if (stringDataValue.HasValue && !string.IsNullOrEmpty(_selectedResult.Format))
+                                                {
+                                                    resultText = EdiabasNet.FormatResult(new EdiabasNet.ResultData(EdiabasNet.ResultType.TypeR, "ERGEBNIS1WERT", stringDataValue.Value), _selectedResult.Format);
+                                                }
+                                            }
+                                        }
+
+                                        if (string.IsNullOrEmpty(resultText))
+                                        {
+                                            _ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Data type: {0}", resultData.ResType.ToString());
+                                            _ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Format: {0}", _selectedResult.Format ?? "No format");
+                                            resultText = FormatResult(resultData, _selectedResult.Format);
+                                        }
                                         _ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Result text: {0}", resultText);
                                         break;
                                     }
@@ -1491,6 +1833,39 @@ namespace BmwDeepObd
                 });
             });
             _jobThread.Start();
+        }
+
+        private void StartVagCoding(VagCodingActivity.CodingMode codingMode)
+        {
+            StoreResults();
+
+            VagCodingActivity.IntentEcuInfo = _ecuInfo;
+            Intent serverIntent = new Intent(this, typeof(VagCodingActivity));
+            serverIntent.PutExtra(VagCodingActivity.ExtraCodingMode, (int)codingMode);
+            serverIntent.PutExtra(VagCodingActivity.ExtraEcuName, _ecuInfo.Name);
+            serverIntent.PutExtra(VagCodingActivity.ExtraEcuDir, _ecuDir);
+            serverIntent.PutExtra(VagCodingActivity.ExtraTraceDir, _traceDir);
+            serverIntent.PutExtra(VagCodingActivity.ExtraTraceAppend, _traceAppend);
+            serverIntent.PutExtra(VagCodingActivity.ExtraInterface, (int)_activityCommon.SelectedInterface);
+            serverIntent.PutExtra(VagCodingActivity.ExtraDeviceAddress, _deviceAddress);
+            serverIntent.PutExtra(VagCodingActivity.ExtraEnetIp, _activityCommon.SelectedEnetIp);
+            StartActivityForResult(serverIntent, (int)ActivityRequest.RequestVagCoding);
+        }
+
+        private void StartVagAdaption()
+        {
+            StoreResults();
+
+            VagAdaptionActivity.IntentEcuInfo = _ecuInfo;
+            Intent serverIntent = new Intent(this, typeof(VagAdaptionActivity));
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraEcuName, _ecuInfo.Name);
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraEcuDir, _ecuDir);
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraTraceDir, _traceDir);
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraTraceAppend, _traceAppend);
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraInterface, (int)_activityCommon.SelectedInterface);
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraDeviceAddress, _deviceAddress);
+            serverIntent.PutExtra(VagAdaptionActivity.ExtraEnetIp, _activityCommon.SelectedEnetIp);
+            StartActivityForResult(serverIntent, (int)ActivityRequest.RequestVagAdaption);
         }
 
         private class JobListAdapter : BaseAdapter<JobInfo>
@@ -1663,7 +2038,7 @@ namespace BmwDeepObd
                     {
                         tagInfo.Info.Selected = args.IsChecked;
                         NotifyDataSetChanged();
-                        _context.ResultCheckChanged();
+                        _context.ResultCheckChanged(args.IsChecked);
                     }
                 }
             }

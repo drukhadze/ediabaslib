@@ -426,6 +426,20 @@
         </xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="vag_data_file" type="string1-type" use="optional">
+      <xs:annotation>
+        <xs:documentation>
+          Relative path of the used VAG data file. Only used for VAG configuration generator.
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="vag_uds_file" type="string1-type" use="optional">
+      <xs:annotation>
+        <xs:documentation>
+          Relative path of the used VAG UDS file. Only used for VAG configuration generator.
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
   </xs:complexType>
 
   <xs:complexType name="ecu-type">
@@ -449,6 +463,20 @@
         </xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="vag_data_file" type="string1-type" use="optional">
+      <xs:annotation>
+        <xs:documentation>
+          Relative path of the used VAG data file. Only used for VAG configuration generator.
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="vag_uds_file" type="string1-type" use="optional">
+      <xs:annotation>
+        <xs:documentation>
+          Relative path of the used VAG UDS file. Only used for VAG configuration generator.
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
     <xs:attribute name="results" type="xs:string" use="optional" default="F_UW_KM">
       <xs:annotation>
         <xs:documentation>
@@ -468,6 +496,13 @@
     <xs:sequence>
       <xs:element name="ecu" type="ecu-type" minOccurs="0" maxOccurs="unbounded"/>
     </xs:sequence>
+    <xs:attribute name="sgbd_functional" type="string1-type" use="optional">
+      <xs:annotation>
+        <xs:documentation>
+          Functional SGBD for this vehicle type. Used for global error reset.
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
   </xs:complexType>
 
   <xs:complexType name="code-type" mixed="true">
@@ -476,6 +511,7 @@
         <![CDATA[
         This block can contain C# user code that will be compiled after reading the xml.
         The class for the code must be always named PageClass.
+        The FormatResult() functions are only called, if there is no format property in the display node!
         It can contain the following pre-defined functions:
         public void CreateLayout(ActivityMain activity, JobReader.PageInfo pageInfo, LinearLayout pageLayout);
         public void DestroyLayout(JobReader.PageInfo pageInfo);
@@ -490,7 +526,7 @@
         ]]>
       </xs:documentation>
     </xs:annotation>
-    <xs:attribute name="show_warnigs" type="xs:boolean" default="false" use="optional">
+    <xs:attribute name="show_warnings" type="xs:boolean" default="false" use="optional">
       <xs:annotation>
         <xs:documentation>
           Show warnings during compilation of user code.
@@ -571,11 +607,20 @@
         </xs:documentation>
       </xs:annotation>
     </xs:attribute>
+
     <xs:attribute name="activate" type="xs:boolean" default="false" use="optional">
       <xs:annotation>
         <xs:documentation>
           Specifies if an activation button will be displayed on the page.
           Use this to prevent automatic job execution on page change.
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+
+    <xs:attribute name="no_update" type="xs:boolean" default="false" use="optional">
+      <xs:annotation>
+        <xs:documentation>
+          Setting this attribute prevents updating the page from the configuration generator.
         </xs:documentation>
       </xs:annotation>
     </xs:attribute>

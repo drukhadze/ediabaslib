@@ -114,6 +114,8 @@ namespace EdiabasLib
 
         protected string ComPortProtected = string.Empty;
         protected int UdsDtcStatusOverrideProtected = -1;
+        protected int UdsEcuCanIdOverrideProtected = -1;
+        protected int UdsTesterCanIdOverrideProtected = -1;
         protected double DtrTimeCorrCom = 0.3;
         protected double DtrTimeCorrFtdi = 0.3;
         protected int AddRecTimeout = 20;
@@ -125,6 +127,8 @@ namespace EdiabasLib
         protected const int Kwp1281ErrorDelay = 150;
         protected const int Kwp1281ErrorRetries = 3;
         protected const int Kwp1281InitDelay = 2600;
+        protected const int Kwp1281InitLongDelay = 2600;
+        protected const int Kwp1281InitShortDelay = 1500;
         protected const byte Kwp1281EndOutput = 0x06;
         protected const byte Kwp1281Ack = 0x09;
         protected const byte Kwp1281Nack = 0x0A;
@@ -228,6 +232,7 @@ namespace EdiabasLib
         protected int ParEdicTesterPresentTime;
         protected int ParEdicTesterPresentTelLen;
         protected byte[] ParEdicTesterPresentTel = new byte[TransBufferSize];
+        protected int ParEdicInitDelay;
         protected int ParEdicAddRetries;
         protected int ParTesterPresentTime;
         protected int ParTesterPresentTelLen;
@@ -261,6 +266,18 @@ namespace EdiabasLib
                 if (prop != null)
                 {
                     UdsDtcStatusOverride = (int)EdiabasNet.StringToValue(prop);
+                }
+
+                prop = EdiabasProtected.GetConfigProperty("ObdUdsEcuCanIdOverride");
+                if (prop != null)
+                {
+                    UdsEcuCanIdOverride = (int)EdiabasNet.StringToValue(prop);
+                }
+
+                prop = EdiabasProtected.GetConfigProperty("ObdUdsTesterCanIdOverride");
+                if (prop != null)
+                {
+                    UdsTesterCanIdOverride = (int)EdiabasNet.StringToValue(prop);
                 }
 
                 prop = EdiabasProtected.GetConfigProperty("ObdDtrTimeCorrCom");
@@ -301,7 +318,17 @@ namespace EdiabasLib
 
                 CommParameterProtected = value;
                 bool edicPar = (CommParameterProtected != null) && (CommParameterProtected.Length > 0) &&
-                              (CommParameterProtected[0] == 0x0000);
+                               (CommParameterProtected[0] == 0x0000);
+                if (EdicSimulation && CommParameterProtected != null)
+                {
+                    if (CommParameterProtected.Length == 0 ||
+                        (CommParameterProtected.Length > 4 && CommParameterProtected[0] == 0x0000 && CommParameterProtected[4] == 0x00))
+                    {
+                        EdiabasProtected.LogData(EdiabasNet.EdLogLevel.Ifh, CommParameterProtected, 0, CommParameterProtected.Length, "EDIC CommParameter ignored");
+                        return;
+                    }
+                }
+
                 CommAnswerLenProtected[0] = 0;
                 CommAnswerLenProtected[1] = 0;
 
@@ -384,6 +411,10 @@ namespace EdiabasLib
                                 ParIdleFunc = IdleKwp2000;
                                 ParFrequentFunc = FrequentKwp2000;
                                 ParFinishFunc = FinishKwp2000;
+                                break;
+
+                            case 0xA4:      // TP1.6
+                                ParTransmitFunc = TransTp16;
                                 break;
 
                             case 0xA5:      // TP2.0
@@ -1276,6 +1307,10 @@ namespace EdiabasLib
             receiveData = null;
             if (EdicSimulation)
             {
+                if (CommAnswerLenProtected[1] == 0x0084)
+                {
+                    StopFrequent();
+                }
                 if (SendBufferFrequentLength != 0)
                 {
                     EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "Frequent mode active");
@@ -1285,6 +1320,12 @@ namespace EdiabasLib
                 EdiabasProtected.LogData(EdiabasNet.EdLogLevel.Ifh, sendData, 0, sendData.Length, "Send EDIC");
                 if (CommAnswerLenProtected[1] != 0x0000)
                 {   // command
+                    if (ParTransmitFunc == TransUnsupported)
+                    {
+                        EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** EDIC transport unsupported");
+                        EdiabasProtected.SetError(EdiabasNet.ErrorCodes.EDIABAS_IFH_0011);
+                        return false;
+                    }
                     receiveData = ByteArray0;
                     switch (CommAnswerLenProtected[1])
                     {
@@ -1322,7 +1363,8 @@ namespace EdiabasLib
                                     ParEdicTesterPresentTel[i] = (byte) CommParameterProtected[i + 49];
                                 }
                                 EdiabasProtected.LogData(EdiabasNet.EdLogLevel.Ifh, ParEdicTesterPresentTel, 0, ParEdicTesterPresentTelLen, "EDIC tester present");
-                                ParEdicAddRetries = 3;
+                                ParEdicInitDelay = Kwp1281InitLongDelay;
+                                ParEdicAddRetries = 1;
                                 // copy Px values to standard timeouts
                                 ParTimeoutStd = ParEdicP2;
                                 ParTimeoutTelEnd = ParEdicP1;
@@ -1419,6 +1461,12 @@ namespace EdiabasLib
 
                         case 0x0011:    // stop communication
                             return true;
+
+                        case 0x0082:    // normal communication
+                            break;
+
+                        case 0x0084:    // stop frequent, normal communication
+                            break;
 
                         default:
                             return true;
@@ -1699,6 +1747,30 @@ namespace EdiabasLib
             set
             {
                 UdsDtcStatusOverrideProtected = value;
+            }
+        }
+
+        public int UdsEcuCanIdOverride
+        {
+            get
+            {
+                return UdsEcuCanIdOverrideProtected;
+            }
+            set
+            {
+                UdsEcuCanIdOverrideProtected = value;
+            }
+        }
+
+        public int UdsTesterCanIdOverride
+        {
+            get
+            {
+                return UdsTesterCanIdOverrideProtected;
+            }
+            set
+            {
+                UdsTesterCanIdOverrideProtected = value;
             }
         }
 
@@ -2833,11 +2905,8 @@ namespace EdiabasLib
                     retries = 0;
                 }
             }
-            if (EdicSimulation)
-            {
-                retries += (UInt32)ParEdicAddRetries;
-            }
-            for (int i = 0; i < retries + 1; i++)
+
+            for (int i = 0; i < retries + 1 + (EdicSimulation ? ParEdicAddRetries : 0); i++)
             {
                 errorCode = ParTransmitFunc(sendData, sendDataLength, ref receiveData, out receiveLength);
                 if (errorCode == EdiabasNet.ErrorCodes.EDIABAS_ERR_NONE)
@@ -2931,6 +3000,14 @@ namespace EdiabasLib
             return EdiabasNet.ErrorCodes.EDIABAS_IFH_0011;
         }
 
+        private EdiabasNet.ErrorCodes TransTp16(byte[] sendData, int sendDataLength, ref byte[] receiveData, out int receiveLength)
+        {
+            receiveLength = 0;
+
+            EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** TP1.6 unsupported");
+            return EdiabasNet.ErrorCodes.EDIABAS_IFH_0011;
+        }
+
         private EdiabasNet.ErrorCodes TransBmwFast(byte[] sendData, int sendDataLength, ref byte[] receiveData, out int receiveLength)
         {
             return TransKwp2000(sendData, sendDataLength, ref receiveData, out receiveLength, true);
@@ -2952,7 +3029,9 @@ namespace EdiabasLib
                 Kwp1281SendNack = false;
                 KeyBytesProtected = ByteArray0;
                 keyBytesList = new List<byte>();
-                long delayTime = ParEdicW1 + 1000;
+                long delayTime = ParEdicInitDelay;
+                ParEdicInitDelay = Kwp1281InitLongDelay;
+                EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Delay time: {0}", delayTime);
                 while ((Stopwatch.GetTimestamp() - LastCommTick) < delayTime * TickResolMs)
                 {
                     Thread.Sleep(10);
@@ -3131,31 +3210,41 @@ namespace EdiabasLib
                 }
                 LastCommTick = Stopwatch.GetTimestamp();
 
+                string sgbdName = EdiabasProtected.SgbdFileName ?? string.Empty;
+                EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "SGBD name: {0}", sgbdName);
+                bool prgFile = sgbdName.EndsWith(".prg", StringComparison.OrdinalIgnoreCase);
+                bool protocolMismatch = false;
                 EdiabasNet.ErrorCodes errorCode = EdiabasNet.ErrorCodes.EDIABAS_IFH_0014;   // concept not implemented
                 switch (KwpMode)
                 {
                     case KwpModes.Kwp2000:
+                        if (prgFile && sgbdName.Contains("1281"))
+                        {
+                            protocolMismatch = true;
+                        }
                         errorCode = InitKwp2000(ref keyBytesList);
                         break;
 
                     case KwpModes.Kwp1281:
-                    {
-                        InterfaceSetInterByteTimeDelegate setInterByteTimeFunc = InterfaceSetInterByteTimeFuncUse;
-                        if (setInterByteTimeFunc != null)
+                        if (prgFile && sgbdName.Contains("2000"))
                         {
-                            if (!setInterByteTimeFunc(0))
-                            {
-                                EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** Set interbyte time failed");
-                                return EdiabasNet.ErrorCodes.EDIABAS_IFH_0041;
-                            }
+                            protocolMismatch = true;
                         }
                         errorCode = InitKwp1281(ref keyBytesList);
                         break;
-                    }
                 }
                 if (errorCode != EdiabasNet.ErrorCodes.EDIABAS_ERR_NONE)
                 {
                     return errorCode;
+                }
+
+                if (protocolMismatch)
+                {
+                    EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** SGBD protocol mismatch");
+                    EcuConnected = false;
+                    ParEdicAddRetries = 3;
+                    ParEdicInitDelay = Kwp1281InitShortDelay;
+                    return EdiabasNet.ErrorCodes.EDIABAS_IFH_0010;   // no response
                 }
             }
             switch (KwpMode)
@@ -3298,13 +3387,15 @@ namespace EdiabasLib
             for (; ; )
             {
                 int timeout = (Nr78Dict.Count > 0) ? ParTimeoutNr78 : ParTimeoutStd;
-                //if (enableLogging) EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Timeout: {0}", timeout);
+                //if (enableLogging) EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Timeout: {0}, {1}", timeout, ParTimeoutTelEnd);
                 // header byte
-                if (!ReceiveData(receiveData, 0, 4, timeout, ParTimeoutTelEnd))
+                int headLength = 4;
+                if (!ReceiveData(receiveData, 0, headLength, timeout, ParTimeoutTelEnd))
                 {
                     if (enableLogging) EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** No header received");
                     return EdiabasNet.ErrorCodes.EDIABAS_IFH_0009;
                 }
+
                 if ((receiveData[0] & 0xC0) != 0x80)
                 {
                     if (enableLogging) EdiabasProtected.LogData(EdiabasNet.EdLogLevel.Ifh, receiveData, 0, 4, "Head");
@@ -3313,8 +3404,19 @@ namespace EdiabasLib
                     return EdiabasNet.ErrorCodes.EDIABAS_IFH_0009;
                 }
 
+                if ((receiveData[0] & 0x3F) == 0x00 && receiveData[3] == 0)
+                {   // 2 byte length
+                    if (!ReceiveData(receiveData, headLength, 2, timeout, ParTimeoutTelEnd))
+                    {
+                        if (enableLogging) EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** No length received");
+                        return EdiabasNet.ErrorCodes.EDIABAS_IFH_0009;
+                    }
+
+                    headLength += 2;
+                }
+
                 int recLength = TelLengthBmwFast(receiveData);
-                if (!ReceiveData(receiveData, 4, recLength - 3, ParTimeoutTelEnd, ParTimeoutTelEnd))
+                if (!ReceiveData(receiveData, headLength, recLength - headLength + 1, ParTimeoutTelEnd, ParTimeoutTelEnd))
                 {
                     if (enableLogging) EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** No tail received");
                     return EdiabasNet.ErrorCodes.EDIABAS_IFH_0009;
@@ -3649,7 +3751,21 @@ namespace EdiabasLib
                 if (enableLogging) EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Overriding UDS DTC status with {0:X02}", (byte) UdsDtcStatusOverride);
             }
 
-            if (!InterfaceSetCanIdsFuncUse(ParEdicEcuCanId, ParEdicTesterCanId, canFlags))
+            int ecuCanId = ParEdicEcuCanId;
+            if (UdsEcuCanIdOverride >= 0)
+            {
+                ecuCanId = UdsEcuCanIdOverride;
+                if (enableLogging) EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Overriding UDS ECU CAN ID with {0:X04}", UdsEcuCanIdOverride);
+            }
+
+            int testerCanId = ParEdicTesterCanId;
+            if (UdsTesterCanIdOverride >= 0)
+            {
+                testerCanId = UdsTesterCanIdOverride;
+                if (enableLogging) EdiabasProtected.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Overriding UDS tester CAN ID with {0:X04}", UdsTesterCanIdOverride);
+            }
+
+            if (!InterfaceSetCanIdsFuncUse(ecuCanId, testerCanId, canFlags))
             {
                 if (enableLogging) EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** Setting CAN IDs failed");
                 return EdiabasNet.ErrorCodes.EDIABAS_IFH_0003;
@@ -3768,7 +3884,14 @@ namespace EdiabasLib
             int telLength = dataBuffer[0] & 0x3F;
             if (telLength == 0)
             {   // with length byte
-                telLength = dataBuffer[3] + 4;
+                if (dataBuffer[3] == 0)
+                {
+                    telLength = (dataBuffer[4] << 8) + dataBuffer[5] + 6;
+                }
+                else
+                {
+                    telLength = dataBuffer[3] + 4;
+                }
             }
             else
             {
@@ -4464,7 +4587,7 @@ namespace EdiabasLib
                 {   // store received data
                     if ((recBlocks == 0) || (LastKwp1281Cmd != Kwp1281Ack) || (!ackStored && appendAck))
                     {
-                        int blockLen = Kwp1281Buffer[0];
+                        int blockLen = Kwp1281Buffer[0] + 1;
                         if (recLength + blockLen > receiveData.Length)
                         {
                             EdiabasProtected.LogString(EdiabasNet.EdLogLevel.Ifh, "*** Receive buffer overflow, ignore data");

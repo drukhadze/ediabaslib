@@ -326,11 +326,49 @@
                 android:layout_height="wrap_content"
                 android:background="#666"
                 android:textColor="#fff" />
-            <Button
-                android:id="@+id/buttonEdiabasTool"
-                android:layout_width="wrap_content"
+            <org.apmem.tools.layouts.FlowLayout
+                android:id="@+id/layoutAddFunctions"
+                android:orientation="horizontal"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/xml_tool_button_ediabas_tool" />
+                android:gravity="left">
+                <Button
+                    android:id="@+id/buttonEdiabasTool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="@string/xml_tool_button_ediabas_tool" />
+                <Button
+                    android:id="@+id/buttonCoding"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="@string/xml_tool_button_coding" />
+                <Button
+                    android:id="@+id/buttonCoding2"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="@string/xml_tool_button_coding2" />
+                <Button
+                    android:id="@+id/buttonAdaption"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="@string/xml_tool_button_adaption" />
+                <Button
+                    android:id="@+id/buttonLogin"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="@string/xml_tool_button_login" />
+                <Button
+                    android:id="@+id/buttonSecurityAccess"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:text="@string/xml_tool_button_sec_access" />
+            </org.apmem.tools.layouts.FlowLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

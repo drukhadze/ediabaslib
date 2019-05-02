@@ -56,11 +56,18 @@ copy "!BATPATH!CanAdapterElm\CanAdapterElm.X\dist\hc04\production\*.hex" "!CANAD
 mkdir "!CANADAPTERELMPATH!spp_uart"
 copy "!BATPATH!CanAdapterElm\CanAdapterElm.X\dist\spp_uart\production\*.hex" "!CANADAPTERELMPATH!spp_uart"
 copy "!BATPATH!CanAdapterElm\Bluetooth\spp_uart\release\*.*" "!CANADAPTERELMPATH!spp_uart"
+mkdir "!CANADAPTERELMPATH!esp8266"
+copy "!BATPATH!CanAdapterElm\CanAdapterElm.X\dist\esp8266\production\*.hex" "!CANADAPTERELMPATH!esp8266"
+copy "!BATPATH!CanAdapterElm\Esp8266\*.bin" "!CANADAPTERELMPATH!esp8266"
+mkdir "!CANADAPTERELMPATH!yc1021"
+copy "!BATPATH!CanAdapterElm\CanAdapterElm.X\dist\yc1021\production\*.hex" "!CANADAPTERELMPATH!yc1021"
+copy "!BATPATH!CanAdapterElm\YC1021\*.bin" "!CANADAPTERELMPATH!yc1021"
 
 mkdir "!ENETADAPTERPATH!"
 copy "!BATPATH!EnetAdapter\Release\mini.bin" "!ENETADAPTERPATH!"
 copy "!BATPATH!EnetAdapter\Release\openwrt*.bin" "!ENETADAPTERPATH!"
 copy "!BATPATH!EnetAdapter\Release\*.img" "!ENETADAPTERPATH!"
+copy "!BATPATH!EnetAdapter\EnetWifiSettings.dat" "!ENETADAPTERPATH!"
 
 mkdir "!ANDROIDSAMPLEPATH!"
 xcopy /y /e "!BATPATH!..\BmwDeepObd\Xml\*.*" "!ANDROIDSAMPLEPATH!"

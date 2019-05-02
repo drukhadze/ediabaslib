@@ -8,7 +8,7 @@ namespace BmwDeepObd
     public class MtcServiceConnection : Java.Lang.Object, IServiceConnection
     {
 #if DEBUG
-        static readonly string Tag = typeof(MtcServiceConnection).FullName;
+        private static readonly string Tag = typeof(MtcServiceConnection).FullName;
 #endif
         public const string InterfaceToken = @"android.microntek.mtcser.BTServiceInf";
         public const string ServicePkg = @"android.microntek.mtcser";
@@ -80,7 +80,7 @@ namespace BmwDeepObd
             }
             _connectedHandler?.Invoke(Bound);
 #if DEBUG
-            Android.Util.Log.Info(Tag, string.Format("MTC Service connected: {0}, Version: {1}", Bound, ApiVersion));
+            Android.Util.Log.Info(Tag, string.Format("MTC Service connected: {0}, ClassName: {1}, Version: {2}", Bound, name?.ClassName ?? string.Empty, ApiVersion));
 #endif
         }
 
@@ -204,6 +204,9 @@ namespace BmwDeepObd
             Parcel reply = Parcel.Obtain();
             try
             {
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("Void({0})", code));
+#endif
                 data.WriteInterfaceToken(InterfaceToken);
                 _binder.Transact(code, data, reply, 0);
                 reply.ReadException();
@@ -329,6 +332,9 @@ namespace BmwDeepObd
             Parcel reply = Parcel.Obtain();
             try
             {
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("SetInt({0}, {1})", code, value));
+#endif
                 data.WriteInterfaceToken(InterfaceToken);
                 data.WriteInt(value);
                 _binder.Transact(code, data, reply, 0);
@@ -351,6 +357,9 @@ namespace BmwDeepObd
             Parcel reply = Parcel.Obtain();
             try
             {
+#if DEBUG
+                Android.Util.Log.Info(Tag, string.Format("SetMac({0}, {1})", code, mac));
+#endif
                 data.WriteInterfaceToken(InterfaceToken);
                 data.WriteString(mac);
                 _binder.Transact(code, data, reply, 0);
@@ -379,7 +388,7 @@ namespace BmwDeepObd
                 IList<string> result = reply.CreateStringArrayList();
 #if DEBUG
                 System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                sb.Append(string.Format("GetList({0}): ", code));
+                sb.Append(string.Format("GetList({0}): {1}=", code, result.Count));
                 foreach (string text in result)
                 {
                     sb.Append("\"");

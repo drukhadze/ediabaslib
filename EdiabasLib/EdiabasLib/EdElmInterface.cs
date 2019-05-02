@@ -29,6 +29,7 @@ namespace EdiabasLib
         {
             new ElmInitEntry("ATD"),
             new ElmInitEntry("ATE0"),
+            new ElmInitEntry("ATPP2COFF"),      // reject fake elms (disables also WGSoft adapters)
             new ElmInitEntry("ATSH6F1"),
             new ElmInitEntry("ATCF600"),
             new ElmInitEntry("ATCM700"),
@@ -45,6 +46,15 @@ namespace EdiabasLib
             new ElmInitEntry("ATJE", 130),      // ELM data format, used for fake ELM detection
             //new ElmInitEntry("ATPPS", -1, false),     // some BT chips have a short buffer, so this test will fail
         };
+
+        public static ElmInitEntry[] Elm327InitFullTransport =
+        {
+            new ElmInitEntry("ATSH6F1"),
+            new ElmInitEntry("ATFCSH6F1"),
+            new ElmInitEntry("ATPBC101"),   // set Parameter for CAN B Custom Protocol 11/500 with var. DLC
+            new ElmInitEntry("ATBI"),       // bypass init sequence
+        };
+
         private static readonly long TickResolMs = Stopwatch.Frequency / 1000;
         private const int Elm327ReadTimeoutOffset = 1000;
         private const int Elm327CommandTimeout = 1500;
@@ -56,6 +66,7 @@ namespace EdiabasLib
         private readonly Stream _outStream;
         private long _elm327ReceiveStartTime;
         private bool _elm327DataMode;
+        private bool _elm327FullTransport;
         private int _elm327CanHeader;
         private int _elm327Timeout;
         private Thread _elm327Thread;
@@ -129,10 +140,7 @@ namespace EdiabasLib
                 }
                 if ((Stopwatch.GetTimestamp() - _elm327ReceiveStartTime) > timeout * TickResolMs)
                 {
-                    if (Ediabas != null)
-                    {
-                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "*** Receive timeout");
-                    }
+                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "*** Receive timeout");
                     return false;
                 }
                 _elm327RespEvent.WaitOne(timeout, false);
@@ -167,7 +175,7 @@ namespace EdiabasLib
                         {
                             return false;
                         }
-                        Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM optional command {0} failed", elmInitEntry.Command);
+                        Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM optional command {0} failed", elmInitEntry.Command);
                     }
                     if (firstCommand && !optional)
                     {
@@ -180,13 +188,45 @@ namespace EdiabasLib
                 if (!elmInitEntry.OkResponse)
                 {
                     string answer = Elm327ReceiveAnswer(Elm327CommandTimeout);
-                    if (answer == null)
+                    if (string.IsNullOrEmpty(answer))
                     {
-                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM no answer");
+                        Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM no answer");
                     }
                 }
                 firstCommand = false;
             }
+
+            if (!Elm327SendCommand("AT@1", false))
+            {
+                Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Sending @1 failed");
+                return false;
+            }
+            string elmDevDesc = Elm327ReceiveAnswer(Elm327CommandTimeout);
+            Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM ID: {0}", elmDevDesc);
+
+            if (!Elm327SendCommand("AT#1", false))
+            {
+                Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Sending #1 failed");
+                return false;
+            }
+            string elmManufact = Elm327ReceiveAnswer(Elm327CommandTimeout);
+            Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM Manufacturer: {0}", elmManufact);
+
+            _elm327FullTransport = elmManufact.ToUpperInvariant().Contains("WGSOFT");
+            Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM full transport: {0}", _elm327FullTransport);
+
+            if (_elm327FullTransport)
+            {
+                foreach (ElmInitEntry elmInitEntry in Elm327InitFullTransport)
+                {
+                    if (!Elm327SendCommand(elmInitEntry.Command))
+                    {
+                        Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM full transport command {0} failed", elmInitEntry.Command);
+                        return false;
+                    }
+                }
+            }
+
             _elm327CanHeader = 0x6F1;
             _elm327Timeout = -1;
             StreamFailure = false;
@@ -239,9 +279,85 @@ namespace EdiabasLib
         {
             while (!_elm327TerminateThread)
             {
-                Elm327CanSender();
+                if (_elm327FullTransport)
+                {
+                    Elm327CanSenderFull();
+                }
+                else
+                {
+                    Elm327CanSender();
+                }
                 Elm327CanReceiver();
                 _elm327RequEvent.WaitOne(10, false);
+            }
+        }
+
+        private void Elm327CanSenderFull()
+        {
+            byte[] requBuffer;
+            lock (_elm327BufferLock)
+            {
+                requBuffer = _elm327RequBuffer;
+                _elm327RequBuffer = null;
+            }
+
+            if (requBuffer != null && requBuffer.Length >= 4)
+            {
+                byte targetAddr = requBuffer[1];
+                byte sourceAddr = requBuffer[2];
+                int dataOffset = 3;
+                int dataLength = requBuffer[0] & 0x3F;
+                if (dataLength == 0)
+                {
+                    // with length byte
+                    if (requBuffer[3] == 0x00)
+                    {
+                        dataLength = (requBuffer[4] << 8) + requBuffer[5];
+                        dataOffset = 6;
+                    }
+                    else
+                    {
+                        dataLength = requBuffer[3];
+                        dataOffset = 4;
+                    }
+                }
+
+                if (requBuffer.Length < (dataOffset + dataLength))
+                {
+                    return;
+                }
+
+                int canHeader = 0x600 | sourceAddr;
+                if (_elm327CanHeader != canHeader)
+                {
+                    if (!Elm327SendCommand("ATSH" + string.Format("{0:X03}", canHeader)))
+                    {
+                        _elm327CanHeader = -1;
+                        return;
+                    }
+                    if (!Elm327SendCommand("ATFCSH" + string.Format("{0:X03}", canHeader)))
+                    {
+                        _elm327CanHeader = -1;
+                        return;
+                    }
+                    _elm327CanHeader = canHeader;
+                }
+                if (!Elm327SendCommand("ATFCSD" + string.Format("{0:X02}300000", targetAddr)))
+                {
+                    return;
+                }
+                if (!Elm327SendCommand("ATCEA" + string.Format("{0:X02}", targetAddr)))
+                {
+                    return;
+                }
+                if (!Elm327SendCommand("ATFCSM1"))
+                {
+                    return;
+                }
+
+                byte[] canSendBuffer = new byte[dataLength];
+                Array.Copy(requBuffer, dataOffset, canSendBuffer, 0, dataLength);
+                Elm327SendCanTelegram(canSendBuffer);
             }
         }
 
@@ -262,8 +378,16 @@ namespace EdiabasLib
                 if (dataLength == 0)
                 {
                     // with length byte
-                    dataLength = requBuffer[3];
-                    dataOffset = 4;
+                    if (requBuffer[3] == 0x00)
+                    {
+                        dataLength = (requBuffer[4] << 8) + requBuffer[5];
+                        dataOffset = 6;
+                    }
+                    else
+                    {
+                        dataLength = requBuffer[3];
+                        dataOffset = 4;
+                    }
                 }
                 if (requBuffer.Length < (dataOffset + dataLength))
                 {
@@ -275,6 +399,7 @@ namespace EdiabasLib
                 {
                     if (!Elm327SendCommand("ATSH" + string.Format("{0:X03}", canHeader)))
                     {
+                        _elm327CanHeader = -1;
                         return;
                     }
                     _elm327CanHeader = canHeader;
@@ -283,10 +408,7 @@ namespace EdiabasLib
                 if (dataLength <= 6)
                 {
                     // single frame
-                    if (Ediabas != null)
-                    {
-                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Send SF");
-                    }
+                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Send SF");
                     canSendBuffer[0] = targetAddr;
                     canSendBuffer[1] = (byte)(0x00 | dataLength); // SF
                     Array.Copy(requBuffer, dataOffset, canSendBuffer, 2, dataLength);
@@ -295,12 +417,9 @@ namespace EdiabasLib
                 else
                 {
                     // first frame
-                    if (Ediabas != null)
-                    {
-                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Send FF");
-                    }
+                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Send FF");
                     canSendBuffer[0] = targetAddr;
-                    canSendBuffer[1] = (byte)(0x10 | ((dataLength >> 8) & 0xFF)); // FF
+                    canSendBuffer[1] = (byte)(0x10 | ((dataLength >> 8) & 0x0F)); // FF
                     canSendBuffer[2] = (byte)dataLength;
                     int telLen = 5;
                     Array.Copy(requBuffer, dataOffset, canSendBuffer, 3, telLen);
@@ -318,20 +437,14 @@ namespace EdiabasLib
                     {
                         if (waitForFc)
                         {
-                            if (Ediabas != null)
-                            {
-                                Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Wait for FC");
-                            }
+                            Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Wait for FC");
                             bool wait = false;
                             do
                             {
                                 int[] canRecData = Elm327ReceiveCanTelegram(Elm327DataTimeout);
                                 if (canRecData == null)
                                 {
-                                    if (Ediabas != null)
-                                    {
-                                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "*** FC timeout");
-                                    }
+                                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "*** FC timeout");
                                     return;
                                 }
                                 if (canRecData.Length >= 5 &&
@@ -348,27 +461,18 @@ namespace EdiabasLib
                                             break;
 
                                         case 1: // Wait
-                                            if (Ediabas != null)
-                                            {
-                                                Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Wait for next FC");
-                                            }
+                                            Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Wait for next FC");
                                             wait = true;
                                             break;
 
                                         default:
-                                            if (Ediabas != null)
-                                            {
-                                                Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** Invalid FC: {0:X01}", frameControl);
-                                            }
+                                            Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** Invalid FC: {0:X01}", frameControl);
                                             return;
                                     }
                                     blockSize = (byte)canRecData[1 + 2];
                                     sepTime = (byte)canRecData[1 + 3];
                                     _elm327ReceiveStartTime = Stopwatch.GetTimestamp();
-                                    if (Ediabas != null)
-                                    {
-                                        Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "BS={0} ST={1}", blockSize, sepTime);
-                                    }
+                                    Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "BS={0} ST={1}", blockSize, sepTime);
                                 }
                                 if (_elm327TerminateThread)
                                 {
@@ -387,10 +491,7 @@ namespace EdiabasLib
                             }
                             blockSize--;
                         }
-                        if (Ediabas != null)
-                        {
-                            Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Send CF");
-                        }
+                        Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Send CF");
                         bool expectResponse = (waitForFc || (dataLength <= 6));
                         // consecutive frame
                         Array.Clear(canSendBuffer, 0, canSendBuffer.Length);
@@ -454,17 +555,11 @@ namespace EdiabasLib
                         switch (frameType)
                         {
                             case 0: // single frame
-                                if (Ediabas != null)
-                                {
-                                    Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Rec SF");
-                                }
+                                Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Rec SF");
                                 telLen = canRecData[2] & 0x0F;
                                 if (telLen > (canRecData.Length - 1 - 2))
                                 {
-                                    if (Ediabas != null)
-                                    {
-                                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Invalid length");
-                                    }
+                                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Invalid length");
                                     continue;
                                 }
                                 recDataBuffer = new byte[telLen];
@@ -478,16 +573,10 @@ namespace EdiabasLib
 
                             case 1: // first frame
                                 {
-                                    if (Ediabas != null)
-                                    {
-                                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Rec FF");
-                                    }
+                                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Rec FF");
                                     if (canRecData.Length < (1 + 8))
                                     {
-                                        if (Ediabas != null)
-                                        {
-                                            Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Invalid length");
-                                        }
+                                        Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Invalid length");
                                         continue;
                                     }
                                     telLen = ((canRecData[1 + 1] & 0x0F) << 8) + canRecData[1 + 2];
@@ -499,25 +588,25 @@ namespace EdiabasLib
                                     }
                                     blockCount = 1;
 
-                                    byte[] canSendBuffer = new byte[8];
-                                    canSendBuffer[0] = sourceAddr;
-                                    canSendBuffer[1] = 0x30; // FC
-                                    canSendBuffer[2] = Elm327CanBlockSize;
-                                    canSendBuffer[3] = Elm327CanSepTime;
-                                    fcCount = Elm327CanBlockSize;
-                                    if (!Elm327SendCanTelegram(canSendBuffer))
+                                    if (!_elm327FullTransport)
                                     {
-                                        return;
+                                        byte[] canSendBuffer = new byte[8];
+                                        canSendBuffer[0] = sourceAddr;
+                                        canSendBuffer[1] = 0x30; // FC
+                                        canSendBuffer[2] = Elm327CanBlockSize;
+                                        canSendBuffer[3] = Elm327CanSepTime;
+                                        fcCount = Elm327CanBlockSize;
+                                        if (!Elm327SendCanTelegram(canSendBuffer))
+                                        {
+                                            return;
+                                        }
                                     }
                                     _elm327ReceiveStartTime = Stopwatch.GetTimestamp();
                                     break;
                                 }
 
                             default:
-                                if (Ediabas != null)
-                                {
-                                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** Rec invalid frame {0:X01}", frameType);
-                                }
+                                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** Rec invalid frame {0:X01}", frameType);
                                 continue;
                         }
                     }
@@ -525,14 +614,16 @@ namespace EdiabasLib
                     {
                         // next frame
                         if (frameType == 2 && recDataBuffer != null &&
-                            (sourceAddr == (canRecData[0] & 0xFF)) && (targetAddr == canRecData[1 + 0]) &&
-                            (canRecData[1 + 1] & 0x0F) == (blockCount & 0x0F)
-                            )
+                            (sourceAddr == (canRecData[0] & 0xFF)) && (targetAddr == canRecData[1 + 0]))
                         {
-                            if (Ediabas != null)
+                            int blockCount1 = canRecData[1 + 1] & 0x0F;
+                            int blockCount2 = blockCount & 0x0F;
+                            if (blockCount1 != blockCount2)
                             {
-                                Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Rec CF");
+                                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Invalid block count: {0} {1}", blockCount1, blockCount2);
+                                continue;
                             }
+                            Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Rec CF");
                             telLen = recDataBuffer.Length - recLen;
                             if (telLen > 6)
                             {
@@ -540,10 +631,7 @@ namespace EdiabasLib
                             }
                             if (telLen > (canRecData.Length - 1 - 2))
                             {
-                                if (Ediabas != null)
-                                {
-                                    Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Invalid length");
-                                }
+                                Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Invalid length");
                                 continue;
                             }
                             for (int i = 0; i < telLen; i++)
@@ -552,15 +640,12 @@ namespace EdiabasLib
                             }
                             recLen += telLen;
                             blockCount++;
-                            if (fcCount > 0 && recLen < recDataBuffer.Length)
+                            if (!_elm327FullTransport && fcCount > 0 && recLen < recDataBuffer.Length)
                             {
                                 fcCount--;
                                 if (fcCount == 0)
                                 {   // send FC
-                                    if (Ediabas != null)
-                                    {
-                                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "(Rec) Send FC");
-                                    }
+                                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "(Rec) Send FC");
                                     byte[] canSendBuffer = new byte[8];
                                     canSendBuffer[0] = sourceAddr;
                                     canSendBuffer[1] = 0x30; // FC
@@ -596,13 +681,21 @@ namespace EdiabasLib
 
             if (recLen >= recDataBuffer.Length)
             {
-                if (Ediabas != null)
-                {
-                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Received length: {0}", recLen);
-                }
+                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "Received length: {0}", recLen);
                 byte[] responseTel;
                 // create BMW-FAST telegram
-                if (recDataBuffer.Length > 0x3F)
+                if (recDataBuffer.Length > 0xFF)
+                {
+                    responseTel = new byte[recDataBuffer.Length + 6];
+                    responseTel[0] = 0x80;
+                    responseTel[1] = targetAddr;
+                    responseTel[2] = sourceAddr;
+                    responseTel[3] = 0x00;
+                    responseTel[4] = (byte)(recDataBuffer.Length >> 8);
+                    responseTel[5] = (byte)recDataBuffer.Length;
+                    Array.Copy(recDataBuffer, 0, responseTel, 6, recDataBuffer.Length);
+                }
+                else if (recDataBuffer.Length > 0x3F)
                 {
                     responseTel = new byte[recDataBuffer.Length + 4];
                     responseTel[0] = 0x80;
@@ -644,30 +737,21 @@ namespace EdiabasLib
                 FlushReceiveBuffer();
                 byte[] sendData = Encoding.UTF8.GetBytes(command + "\r");
                 _outStream.Write(sendData, 0, sendData.Length);
-                if (Ediabas != null)
-                {
-                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CMD send: {0}", command);
-                }
+                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CMD send: {0}", command);
                 if (readAnswer)
                 {
                     string answer = Elm327ReceiveAnswer(Elm327CommandTimeout);
                     // check for OK
                     if (!answer.Contains("OK\r"))
                     {
-                        if (Ediabas != null)
-                        {
-                            Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM invalid response: {0}", answer);
-                        }
+                        Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM invalid response: {0}", answer);
                         return false;
                     }
                 }
             }
             catch (Exception ex)
             {
-                if (Ediabas != null)
-                {
-                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM stream failure: {0}", ex.Message);
-                }
+                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM stream failure: {0}", ex.Message);
                 StreamFailure = true;
                 return false;
             }
@@ -683,21 +767,15 @@ namespace EdiabasLib
                 {
                     if (!Elm327SendCommand(string.Format("ATST{0:X02}", timeout), false))
                     {
-                        if (Ediabas != null)
-                        {
-                            Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "Setting timeout failed");
-                            _elm327Timeout = -1;
-                            return false;
-                        }
+                        Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "Setting timeout failed");
+                        _elm327Timeout = -1;
+                        return false;
                     }
                     string answer = Elm327ReceiveAnswer(Elm327CommandTimeout);
                     // check for OK
-                    if (!answer.Contains("OK\r") && !answer.Contains("STOPPED\r") && !answer.Contains("NO DATA\r"))
+                    if (!answer.Contains("OK\r") && !answer.Contains("STOPPED\r") && !answer.Contains("NO DATA\r") && !answer.Contains("DATA ERROR\r"))
                     {
-                        if (Ediabas != null)
-                        {
-                            Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM set timeout invalid response: {0}", answer);
-                        }
+                        Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM set timeout invalid response: {0}", answer);
                         _elm327Timeout = -1;
                         return false;
                     }
@@ -716,10 +794,7 @@ namespace EdiabasLib
                 {
                     stringBuilder.Append((string.Format("{0:X02}", data)));
                 }
-                if (Ediabas != null)
-                {
-                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CAN send: {0}", stringBuilder.ToString());
-                }
+                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CAN send: {0}", stringBuilder.ToString());
                 stringBuilder.Append("\r");
                 byte[] sendData = Encoding.UTF8.GetBytes(stringBuilder.ToString());
                 _outStream.Write(sendData, 0, sendData.Length);
@@ -727,10 +802,7 @@ namespace EdiabasLib
             }
             catch (Exception ex)
             {
-                if (Ediabas != null)
-                {
-                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM stream failure: {0}", ex.Message);
-                }
+                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "*** ELM stream failure: {0}", ex.Message);
                 StreamFailure = true;
                 return false;
             }
@@ -803,10 +875,7 @@ namespace EdiabasLib
                     stringBuilder.Append(Convert.ToChar(data));
                     if (data == 0x3E)
                     {
-                        if (Ediabas != null)
-                        {
-                            Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM data mode already terminated: " + stringBuilder);
-                        }
+                        Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM data mode already terminated: " + stringBuilder);
                         _elm327DataMode = false;
                         return true;
                     }
@@ -817,10 +886,7 @@ namespace EdiabasLib
             {
                 _outStream.WriteByte(0x20);    // space
             }
-            if (Ediabas != null)
-            {
-                Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM send SPACE");
-            }
+            Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM send SPACE");
 
             long startTime = Stopwatch.GetTimestamp();
             for (;;)
@@ -852,10 +918,7 @@ namespace EdiabasLib
                 }
                 if ((Stopwatch.GetTimestamp() - startTime) > timeout * TickResolMs)
                 {
-                    if (Ediabas != null)
-                    {
-                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "*** ELM leave data mode timeout");
-                    }
+                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "*** ELM leave data mode timeout");
                     return false;
                 }
                 if (elmThread)
@@ -890,10 +953,7 @@ namespace EdiabasLib
                             if (data == '\r')
                             {
                                 string answer = stringBuilder.ToString();
-                                if (Ediabas != null)
-                                {
-                                    Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CAN rec: {0}", answer);
-                                }
+                                Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CAN rec: {0}", answer);
                                 return answer;
                             }
                             stringBuilder.Append(Convert.ToChar(data));
@@ -907,27 +967,18 @@ namespace EdiabasLib
                             _elm327DataMode = false;
                             if (canData)
                             {
-                                if (Ediabas != null)
-                                {
-                                    Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM Data mode aborted");
-                                }
+                                Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM Data mode aborted");
                                 return string.Empty;
                             }
                             string answer = stringBuilder.ToString();
-                            if (Ediabas != null)
-                            {
-                                Ediabas.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CMD rec: {0}", answer);
-                            }
+                            Ediabas?.LogFormat(EdiabasNet.EdLogLevel.Ifh, "ELM CMD rec: {0}", answer);
                             return answer;
                         }
                     }
                 }
                 if ((Stopwatch.GetTimestamp() - startTime) > timeout * TickResolMs)
                 {
-                    if (Ediabas != null)
-                    {
-                        Ediabas.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM rec timeout");
-                    }
+                    Ediabas?.LogString(EdiabasNet.EdLogLevel.Ifh, "ELM rec timeout");
                     return string.Empty;
                 }
                 if (elmThread)

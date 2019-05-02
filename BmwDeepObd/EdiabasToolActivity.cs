@@ -633,6 +633,10 @@ namespace BmwDeepObd
                     }
                     SendTraceFileAlways((sender, args) =>
                     {
+                        if (_activityCommon == null)
+                        {
+                            return;
+                        }
                         UpdateOptionsMenu();
                     });
                     return true;
@@ -665,6 +669,10 @@ namespace BmwDeepObd
                 case Resource.Id.menu_submenu_help:
                     _activityCommon.ShowWifiConnectedWarning(() =>
                     {
+                        if (_activityCommon == null)
+                        {
+                            return;
+                        }
                         StartActivity(new Intent(Intent.ActionView, Android.Net.Uri.Parse(@"https://github.com/uholeschak/ediabaslib/blob/master/docs/EdiabasTool.md")));
                     });
                     return true;
@@ -769,7 +777,7 @@ namespace BmwDeepObd
                 {
                     return false;
                 }
-                return _activityCommon.RequestSendTraceFile(_appDataDir, _instanceData.TraceDir, PackageManager.GetPackageInfo(PackageName, 0), GetType(), handler);
+                return _activityCommon.RequestSendTraceFile(_appDataDir, _instanceData.TraceDir, GetType(), handler);
             }
             return false;
         }
@@ -783,7 +791,7 @@ namespace BmwDeepObd
                 {
                     return false;
                 }
-                return _activityCommon.SendTraceFile(_appDataDir, _instanceData.TraceDir, PackageManager.GetPackageInfo(PackageName, 0), GetType(), handler);
+                return _activityCommon.SendTraceFile(_appDataDir, _instanceData.TraceDir, GetType(), handler);
             }
             return false;
         }
@@ -825,6 +833,10 @@ namespace BmwDeepObd
                 }
                 if (TranslateEcuText((sender, args) =>
                 {
+                    if (_activityCommon == null)
+                    {
+                        return;
+                    }
                     UpdateDisplay();
                     UpdateTranslationText();
                 }))
@@ -891,6 +903,10 @@ namespace BmwDeepObd
             }
             _activityCommon.SelectInterface((sender, args) =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 EdiabasClose();
                 _instanceData.SgbdFileName = string.Empty;
                 UpdateOptionsMenu();
@@ -902,6 +918,10 @@ namespace BmwDeepObd
         {
             _activityCommon.RequestInterfaceEnable((sender, args) =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 UpdateOptionsMenu();
             });
         }
@@ -929,6 +949,10 @@ namespace BmwDeepObd
             builder.SetView(listView);
             builder.SetPositiveButton(Resource.String.button_ok, (sender, args) =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 SparseBooleanArray sparseArray = listView.CheckedItemPositions;
                 for (int i = 0; i < sparseArray.Size(); i++)
                 {
@@ -967,11 +991,28 @@ namespace BmwDeepObd
             {
                 return;
             }
+
+            if (_activityCommon.ShowConnectWarning(retry =>
+            {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
+                if (retry)
+                {
+                    AdapterConfig();
+                }
+            }))
+            {
+                return;
+            }
+
             if (_activityCommon.SelectedInterface == ActivityCommon.InterfaceType.Enet)
             {
                 _activityCommon.EnetAdapterConfig();
                 return;
             }
+
             Intent serverIntent = new Intent(this, typeof(CanAdapterActivity));
             serverIntent.PutExtra(CanAdapterActivity.ExtraDeviceAddress, _instanceData.DeviceAddress);
             serverIntent.PutExtra(CanAdapterActivity.ExtraInterfaceType, (int)_activityCommon.SelectedInterface);
@@ -992,6 +1033,10 @@ namespace BmwDeepObd
             }
             _activityCommon.SelectEnetIp((sender, args) =>
             {
+                if (_activityCommon == null)
+                {
+                    return;
+                }
                 UpdateOptionsMenu();
             });
         }
@@ -1370,7 +1415,7 @@ namespace BmwDeepObd
                 List<string> messageList = new List<string>();
                 try
                 {
-                    _ediabas.ResolveSgbdFile(_instanceData.SgbdFileName);
+                    ActivityCommon.ResolveSgbdFile(_ediabas, _instanceData.SgbdFileName);
 
                     _ediabas.ArgString = "ALL";
                     _ediabas.ArgBinaryStd = null;

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<configurationDescriptor version="62">
+<configurationDescriptor version="65">
   <logicalFolder name="root" displayName="root" projectFiles="true">
     <logicalFolder name="HeaderFiles"
                    displayName="Header Files"
@@ -35,6 +35,9 @@
         <languageToolchainVersion>1.33</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
+      <packs>
+        <pack name="PIC18F-K_DFP" vendor="Microchip" version="1.0.48"/>
+      </packs>
       <compileType>
         <linkerTool>
           <linkerLibItems>
@@ -105,11 +108,16 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <HI-TECH-COMP>
+        <property key="additional-warnings" value="true"/>
         <property key="asmlist" value="true"/>
+        <property key="default-bitfield-type" value="true"/>
+        <property key="default-char-type" value="true"/>
         <property key="define-macros" value="ADAPTER_TYPE=0x02"/>
         <property key="disable-optimizations" value="false"/>
         <property key="extra-include-directories" value=""/>
         <property key="favor-optimization-for" value="+speed,-space"/>
+        <property key="garbage-collect-data" value="true"/>
+        <property key="garbage-collect-functions" value="true"/>
         <property key="identifier-length" value="255"/>
         <property key="local-generation" value="false"/>
         <property key="operation-mode" value="pro"/>
@@ -117,14 +125,14 @@
         <property key="optimization-assembler" value="true"/>
         <property key="optimization-assembler-files" value="true"/>
         <property key="optimization-debug" value="false"/>
-        <property key="optimization-global" value="true"/>
         <property key="optimization-invariant-enable" value="false"/>
         <property key="optimization-invariant-value" value="16"/>
-        <property key="optimization-level" value="9"/>
-        <property key="optimization-set" value="default"/>
+        <property key="optimization-level" value="-O3"/>
         <property key="optimization-speed" value="true"/>
         <property key="optimization-stable-enable" value="false"/>
+        <property key="pack-struct" value="true"/>
         <property key="preprocess-assembler" value="true"/>
+        <property key="short-enums" value="true"/>
         <property key="undefine-macros" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
@@ -149,11 +157,14 @@
         <property key="create-html-files" value="false"/>
         <property key="data-model-ram" value=""/>
         <property key="data-model-size-of-double" value="24"/>
+        <property key="data-model-size-of-double-gcc" value="short-double"/>
         <property key="data-model-size-of-float" value="24"/>
+        <property key="data-model-size-of-float-gcc" value="short-float"/>
         <property key="display-class-usage" value="false"/>
         <property key="display-hex-usage" value="false"/>
         <property key="display-overall-usage" value="true"/>
         <property key="display-psect-usage" value="false"/>
+        <property key="extra-lib-directories" value=""/>
         <property key="fill-flash-options-addr" value="0x0800:0x7FFF"/>
         <property key="fill-flash-options-const" value="0xFFFF"/>
         <property key="fill-flash-options-how" value="1"/>
@@ -163,14 +174,17 @@
         <property key="fill-flash-options-what" value="2"/>
         <property key="format-hex-file-for-download" value="false"/>
         <property key="initialize-data" value="true"/>
+        <property key="input-libraries" value="libm"/>
         <property key="keep-generated-startup.as" value="false"/>
         <property key="link-in-c-library" value="true"/>
+        <property key="link-in-c-library-gcc" value=""/>
         <property key="link-in-peripheral-library" value="true"/>
         <property key="managed-stack" value="false"/>
         <property key="opt-xc8-linker-file" value="false"/>
         <property key="opt-xc8-linker-link_startup" value="false"/>
         <property key="opt-xc8-linker-serial" value=""/>
         <property key="program-the-device-with-default-config-words" value="true"/>
+        <property key="remove-unused-sections" value="true"/>
       </HI-TECH-LINK>
       <PICkit3PlatformTool>
         <property key="AutoSelectMemRanges" value="auto"/>
@@ -179,6 +193,7 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="debugoptions.useswbreakpoints" value="false"/>
         <property key="hwtoolclock.frcindebug" value="false"/>
         <property key="memories.aux" value="false"/>
         <property key="memories.bootflash" value="true"/>
@@ -452,11 +467,16 @@
       </Simulator>
       <XC8-config-global>
         <property key="advanced-elf" value="true"/>
+        <property key="gcc-opt-driver-new" value="false"/>
+        <property key="gcc-opt-std" value="--std=c89"/>
+        <property key="gcc-output-file-format" value="dwarf-3"/>
+        <property key="omit-pack-options" value="false"/>
         <property key="output-file-format" value="-mcof,+elf"/>
         <property key="stack-size-high" value="auto"/>
         <property key="stack-size-low" value="auto"/>
         <property key="stack-size-main" value="auto"/>
         <property key="stack-type" value="compiled"/>
+        <property key="user-pack-device-support" value=""/>
       </XC8-config-global>
     </conf>
     <conf name="bc04" type="2">
@@ -470,6 +490,9 @@
         <languageToolchainVersion>1.33</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
+      <packs>
+        <pack name="PIC18F-K_DFP" vendor="Microchip" version="1.0.48"/>
+      </packs>
       <compileType>
         <linkerTool>
           <linkerLibItems>
@@ -540,11 +563,16 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <HI-TECH-COMP>
+        <property key="additional-warnings" value="true"/>
         <property key="asmlist" value="true"/>
+        <property key="default-bitfield-type" value="true"/>
+        <property key="default-char-type" value="true"/>
         <property key="define-macros" value="ADAPTER_TYPE=0x03"/>
         <property key="disable-optimizations" value="false"/>
         <property key="extra-include-directories" value=""/>
         <property key="favor-optimization-for" value="+speed,-space"/>
+        <property key="garbage-collect-data" value="true"/>
+        <property key="garbage-collect-functions" value="true"/>
         <property key="identifier-length" value="255"/>
         <property key="local-generation" value="false"/>
         <property key="operation-mode" value="pro"/>
@@ -552,14 +580,14 @@
         <property key="optimization-assembler" value="true"/>
         <property key="optimization-assembler-files" value="true"/>
         <property key="optimization-debug" value="false"/>
-        <property key="optimization-global" value="true"/>
         <property key="optimization-invariant-enable" value="false"/>
         <property key="optimization-invariant-value" value="16"/>
-        <property key="optimization-level" value="9"/>
-        <property key="optimization-set" value="default"/>
+        <property key="optimization-level" value="-O3"/>
         <property key="optimization-speed" value="true"/>
         <property key="optimization-stable-enable" value="false"/>
+        <property key="pack-struct" value="true"/>
         <property key="preprocess-assembler" value="true"/>
+        <property key="short-enums" value="true"/>
         <property key="undefine-macros" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
@@ -584,11 +612,14 @@
         <property key="create-html-files" value="false"/>
         <property key="data-model-ram" value=""/>
         <property key="data-model-size-of-double" value="24"/>
+        <property key="data-model-size-of-double-gcc" value="short-double"/>
         <property key="data-model-size-of-float" value="24"/>
+        <property key="data-model-size-of-float-gcc" value="short-float"/>
         <property key="display-class-usage" value="false"/>
         <property key="display-hex-usage" value="false"/>
         <property key="display-overall-usage" value="true"/>
         <property key="display-psect-usage" value="false"/>
+        <property key="extra-lib-directories" value=""/>
         <property key="fill-flash-options-addr" value="0x0800:0x7FFF"/>
         <property key="fill-flash-options-const" value="0xFFFF"/>
         <property key="fill-flash-options-how" value="1"/>
@@ -598,14 +629,17 @@
         <property key="fill-flash-options-what" value="2"/>
         <property key="format-hex-file-for-download" value="false"/>
         <property key="initialize-data" value="true"/>
+        <property key="input-libraries" value="libm"/>
         <property key="keep-generated-startup.as" value="false"/>
         <property key="link-in-c-library" value="true"/>
+        <property key="link-in-c-library-gcc" value=""/>
         <property key="link-in-peripheral-library" value="true"/>
         <property key="managed-stack" value="false"/>
         <property key="opt-xc8-linker-file" value="false"/>
         <property key="opt-xc8-linker-link_startup" value="false"/>
         <property key="opt-xc8-linker-serial" value=""/>
         <property key="program-the-device-with-default-config-words" value="true"/>
+        <property key="remove-unused-sections" value="true"/>
       </HI-TECH-LINK>
       <PICkit3PlatformTool>
         <property key="AutoSelectMemRanges" value="auto"/>
@@ -614,6 +648,7 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="debugoptions.useswbreakpoints" value="false"/>
         <property key="hwtoolclock.frcindebug" value="false"/>
         <property key="memories.aux" value="false"/>
         <property key="memories.bootflash" value="true"/>
@@ -887,11 +922,16 @@
       </Simulator>
       <XC8-config-global>
         <property key="advanced-elf" value="true"/>
+        <property key="gcc-opt-driver-new" value="false"/>
+        <property key="gcc-opt-std" value="--std=c89"/>
+        <property key="gcc-output-file-format" value="dwarf-3"/>
+        <property key="omit-pack-options" value="false"/>
         <property key="output-file-format" value="-mcof,+elf"/>
         <property key="stack-size-high" value="auto"/>
         <property key="stack-size-low" value="auto"/>
         <property key="stack-size-main" value="auto"/>
         <property key="stack-type" value="compiled"/>
+        <property key="user-pack-device-support" value=""/>
       </XC8-config-global>
     </conf>
     <conf name="hc04" type="2">
@@ -905,6 +945,9 @@
         <languageToolchainVersion>1.33</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
+      <packs>
+        <pack name="PIC18F-K_DFP" vendor="Microchip" version="1.0.48"/>
+      </packs>
       <compileType>
         <linkerTool>
           <linkerLibItems>
@@ -975,11 +1018,16 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <HI-TECH-COMP>
+        <property key="additional-warnings" value="true"/>
         <property key="asmlist" value="true"/>
+        <property key="default-bitfield-type" value="true"/>
+        <property key="default-char-type" value="true"/>
         <property key="define-macros" value="ADAPTER_TYPE=0x04"/>
         <property key="disable-optimizations" value="false"/>
         <property key="extra-include-directories" value=""/>
         <property key="favor-optimization-for" value="+speed,-space"/>
+        <property key="garbage-collect-data" value="true"/>
+        <property key="garbage-collect-functions" value="true"/>
         <property key="identifier-length" value="255"/>
         <property key="local-generation" value="false"/>
         <property key="operation-mode" value="pro"/>
@@ -987,14 +1035,14 @@
         <property key="optimization-assembler" value="true"/>
         <property key="optimization-assembler-files" value="true"/>
         <property key="optimization-debug" value="false"/>
-        <property key="optimization-global" value="true"/>
         <property key="optimization-invariant-enable" value="false"/>
         <property key="optimization-invariant-value" value="16"/>
-        <property key="optimization-level" value="9"/>
-        <property key="optimization-set" value="default"/>
+        <property key="optimization-level" value="-O3"/>
         <property key="optimization-speed" value="true"/>
         <property key="optimization-stable-enable" value="false"/>
+        <property key="pack-struct" value="true"/>
         <property key="preprocess-assembler" value="true"/>
+        <property key="short-enums" value="true"/>
         <property key="undefine-macros" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
@@ -1019,11 +1067,14 @@
         <property key="create-html-files" value="false"/>
         <property key="data-model-ram" value=""/>
         <property key="data-model-size-of-double" value="24"/>
+        <property key="data-model-size-of-double-gcc" value="short-double"/>
         <property key="data-model-size-of-float" value="24"/>
+        <property key="data-model-size-of-float-gcc" value="short-float"/>
         <property key="display-class-usage" value="false"/>
         <property key="display-hex-usage" value="false"/>
         <property key="display-overall-usage" value="true"/>
         <property key="display-psect-usage" value="false"/>
+        <property key="extra-lib-directories" value=""/>
         <property key="fill-flash-options-addr" value="0x0800:0x7FFF"/>
         <property key="fill-flash-options-const" value="0xFFFF"/>
         <property key="fill-flash-options-how" value="1"/>
@@ -1033,14 +1084,17 @@
         <property key="fill-flash-options-what" value="2"/>
         <property key="format-hex-file-for-download" value="false"/>
         <property key="initialize-data" value="true"/>
+        <property key="input-libraries" value="libm"/>
         <property key="keep-generated-startup.as" value="false"/>
         <property key="link-in-c-library" value="true"/>
+        <property key="link-in-c-library-gcc" value=""/>
         <property key="link-in-peripheral-library" value="true"/>
         <property key="managed-stack" value="false"/>
         <property key="opt-xc8-linker-file" value="false"/>
         <property key="opt-xc8-linker-link_startup" value="false"/>
         <property key="opt-xc8-linker-serial" value=""/>
         <property key="program-the-device-with-default-config-words" value="true"/>
+        <property key="remove-unused-sections" value="true"/>
       </HI-TECH-LINK>
       <PICkit3PlatformTool>
         <property key="AutoSelectMemRanges" value="auto"/>
@@ -1049,6 +1103,7 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="debugoptions.useswbreakpoints" value="false"/>
         <property key="hwtoolclock.frcindebug" value="false"/>
         <property key="memories.aux" value="false"/>
         <property key="memories.bootflash" value="true"/>
@@ -1322,11 +1377,16 @@
       </Simulator>
       <XC8-config-global>
         <property key="advanced-elf" value="true"/>
+        <property key="gcc-opt-driver-new" value="false"/>
+        <property key="gcc-opt-std" value="--std=c89"/>
+        <property key="gcc-output-file-format" value="dwarf-3"/>
+        <property key="omit-pack-options" value="false"/>
         <property key="output-file-format" value="-mcof,+elf"/>
         <property key="stack-size-high" value="auto"/>
         <property key="stack-size-low" value="auto"/>
         <property key="stack-size-main" value="auto"/>
         <property key="stack-type" value="compiled"/>
+        <property key="user-pack-device-support" value=""/>
       </XC8-config-global>
     </conf>
     <conf name="spp_uart" type="2">
@@ -1340,6 +1400,9 @@
         <languageToolchainVersion>1.33</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
+      <packs>
+        <pack name="PIC18F-K_DFP" vendor="Microchip" version="1.0.48"/>
+      </packs>
       <compileType>
         <linkerTool>
           <linkerLibItems>
@@ -1410,11 +1473,16 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <HI-TECH-COMP>
+        <property key="additional-warnings" value="true"/>
         <property key="asmlist" value="true"/>
+        <property key="default-bitfield-type" value="true"/>
+        <property key="default-char-type" value="true"/>
         <property key="define-macros" value="ADAPTER_TYPE=0x05"/>
         <property key="disable-optimizations" value="false"/>
         <property key="extra-include-directories" value=""/>
         <property key="favor-optimization-for" value="+speed,-space"/>
+        <property key="garbage-collect-data" value="true"/>
+        <property key="garbage-collect-functions" value="true"/>
         <property key="identifier-length" value="255"/>
         <property key="local-generation" value="false"/>
         <property key="operation-mode" value="pro"/>
@@ -1422,14 +1490,14 @@
         <property key="optimization-assembler" value="true"/>
         <property key="optimization-assembler-files" value="true"/>
         <property key="optimization-debug" value="false"/>
-        <property key="optimization-global" value="true"/>
         <property key="optimization-invariant-enable" value="false"/>
         <property key="optimization-invariant-value" value="16"/>
-        <property key="optimization-level" value="9"/>
-        <property key="optimization-set" value="default"/>
+        <property key="optimization-level" value="-O3"/>
         <property key="optimization-speed" value="true"/>
         <property key="optimization-stable-enable" value="false"/>
+        <property key="pack-struct" value="true"/>
         <property key="preprocess-assembler" value="true"/>
+        <property key="short-enums" value="true"/>
         <property key="undefine-macros" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
@@ -1454,11 +1522,14 @@
         <property key="create-html-files" value="false"/>
         <property key="data-model-ram" value=""/>
         <property key="data-model-size-of-double" value="24"/>
+        <property key="data-model-size-of-double-gcc" value="short-double"/>
         <property key="data-model-size-of-float" value="24"/>
+        <property key="data-model-size-of-float-gcc" value="short-float"/>
         <property key="display-class-usage" value="false"/>
         <property key="display-hex-usage" value="false"/>
         <property key="display-overall-usage" value="true"/>
         <property key="display-psect-usage" value="false"/>
+        <property key="extra-lib-directories" value=""/>
         <property key="fill-flash-options-addr" value="0x0800:0x7FFF"/>
         <property key="fill-flash-options-const" value="0xFFFF"/>
         <property key="fill-flash-options-how" value="1"/>
@@ -1468,14 +1539,17 @@
         <property key="fill-flash-options-what" value="2"/>
         <property key="format-hex-file-for-download" value="false"/>
         <property key="initialize-data" value="true"/>
+        <property key="input-libraries" value="libm"/>
         <property key="keep-generated-startup.as" value="false"/>
         <property key="link-in-c-library" value="true"/>
+        <property key="link-in-c-library-gcc" value=""/>
         <property key="link-in-peripheral-library" value="true"/>
         <property key="managed-stack" value="false"/>
         <property key="opt-xc8-linker-file" value="false"/>
         <property key="opt-xc8-linker-link_startup" value="false"/>
         <property key="opt-xc8-linker-serial" value=""/>
         <property key="program-the-device-with-default-config-words" value="true"/>
+        <property key="remove-unused-sections" value="true"/>
       </HI-TECH-LINK>
       <PICkit3PlatformTool>
         <property key="AutoSelectMemRanges" value="auto"/>
@@ -1484,6 +1558,7 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="debugoptions.useswbreakpoints" value="false"/>
         <property key="hwtoolclock.frcindebug" value="false"/>
         <property key="memories.aux" value="false"/>
         <property key="memories.bootflash" value="true"/>
@@ -1757,11 +1832,16 @@
       </Simulator>
       <XC8-config-global>
         <property key="advanced-elf" value="true"/>
+        <property key="gcc-opt-driver-new" value="false"/>
+        <property key="gcc-opt-std" value="--std=c89"/>
+        <property key="gcc-output-file-format" value="dwarf-3"/>
+        <property key="omit-pack-options" value="false"/>
         <property key="output-file-format" value="-mcof,+elf"/>
         <property key="stack-size-high" value="auto"/>
         <property key="stack-size-low" value="auto"/>
         <property key="stack-size-main" value="auto"/>
         <property key="stack-type" value="compiled"/>
+        <property key="user-pack-device-support" value=""/>
       </XC8-config-global>
     </conf>
     <conf name="yc1021" type="2">
@@ -1775,6 +1855,9 @@
         <languageToolchainVersion>1.33</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
+      <packs>
+        <pack name="PIC18F-K_DFP" vendor="Microchip" version="1.0.48"/>
+      </packs>
       <compileType>
         <linkerTool>
           <linkerLibItems>
@@ -1845,11 +1928,16 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <HI-TECH-COMP>
+        <property key="additional-warnings" value="true"/>
         <property key="asmlist" value="true"/>
+        <property key="default-bitfield-type" value="true"/>
+        <property key="default-char-type" value="true"/>
         <property key="define-macros" value="ADAPTER_TYPE=0x06"/>
         <property key="disable-optimizations" value="false"/>
         <property key="extra-include-directories" value=""/>
         <property key="favor-optimization-for" value="+speed,-space"/>
+        <property key="garbage-collect-data" value="true"/>
+        <property key="garbage-collect-functions" value="true"/>
         <property key="identifier-length" value="255"/>
         <property key="local-generation" value="false"/>
         <property key="operation-mode" value="pro"/>
@@ -1857,14 +1945,14 @@
         <property key="optimization-assembler" value="true"/>
         <property key="optimization-assembler-files" value="true"/>
         <property key="optimization-debug" value="false"/>
-        <property key="optimization-global" value="true"/>
         <property key="optimization-invariant-enable" value="false"/>
         <property key="optimization-invariant-value" value="16"/>
-        <property key="optimization-level" value="9"/>
-        <property key="optimization-set" value="default"/>
+        <property key="optimization-level" value="-O3"/>
         <property key="optimization-speed" value="true"/>
         <property key="optimization-stable-enable" value="false"/>
+        <property key="pack-struct" value="true"/>
         <property key="preprocess-assembler" value="true"/>
+        <property key="short-enums" value="true"/>
         <property key="undefine-macros" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
@@ -1889,11 +1977,14 @@
         <property key="create-html-files" value="false"/>
         <property key="data-model-ram" value=""/>
         <property key="data-model-size-of-double" value="24"/>
+        <property key="data-model-size-of-double-gcc" value="short-double"/>
         <property key="data-model-size-of-float" value="24"/>
+        <property key="data-model-size-of-float-gcc" value="short-float"/>
         <property key="display-class-usage" value="false"/>
         <property key="display-hex-usage" value="false"/>
         <property key="display-overall-usage" value="true"/>
         <property key="display-psect-usage" value="false"/>
+        <property key="extra-lib-directories" value=""/>
         <property key="fill-flash-options-addr" value="0x0800:0x7FFF"/>
         <property key="fill-flash-options-const" value="0xFFFF"/>
         <property key="fill-flash-options-how" value="1"/>
@@ -1903,14 +1994,17 @@
         <property key="fill-flash-options-what" value="2"/>
         <property key="format-hex-file-for-download" value="false"/>
         <property key="initialize-data" value="true"/>
+        <property key="input-libraries" value="libm"/>
         <property key="keep-generated-startup.as" value="false"/>
         <property key="link-in-c-library" value="true"/>
+        <property key="link-in-c-library-gcc" value=""/>
         <property key="link-in-peripheral-library" value="true"/>
         <property key="managed-stack" value="false"/>
         <property key="opt-xc8-linker-file" value="false"/>
         <property key="opt-xc8-linker-link_startup" value="false"/>
         <property key="opt-xc8-linker-serial" value=""/>
         <property key="program-the-device-with-default-config-words" value="true"/>
+        <property key="remove-unused-sections" value="true"/>
       </HI-TECH-LINK>
       <PICkit3PlatformTool>
         <property key="AutoSelectMemRanges" value="auto"/>
@@ -1919,6 +2013,7 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="debugoptions.useswbreakpoints" value="false"/>
         <property key="hwtoolclock.frcindebug" value="false"/>
         <property key="memories.aux" value="false"/>
         <property key="memories.bootflash" value="true"/>
@@ -2192,11 +2287,16 @@
       </Simulator>
       <XC8-config-global>
         <property key="advanced-elf" value="true"/>
+        <property key="gcc-opt-driver-new" value="false"/>
+        <property key="gcc-opt-std" value="--std=c89"/>
+        <property key="gcc-output-file-format" value="dwarf-3"/>
+        <property key="omit-pack-options" value="false"/>
         <property key="output-file-format" value="-mcof,+elf"/>
         <property key="stack-size-high" value="auto"/>
         <property key="stack-size-low" value="auto"/>
         <property key="stack-size-main" value="auto"/>
         <property key="stack-type" value="compiled"/>
+        <property key="user-pack-device-support" value=""/>
       </XC8-config-global>
     </conf>
     <conf name="esp8266" type="2">
@@ -2210,6 +2310,9 @@
         <languageToolchainVersion>1.33</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
+      <packs>
+        <pack name="PIC18F-K_DFP" vendor="Microchip" version="1.0.48"/>
+      </packs>
       <compileType>
         <linkerTool>
           <linkerLibItems>
@@ -2280,11 +2383,16 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <HI-TECH-COMP>
+        <property key="additional-warnings" value="true"/>
         <property key="asmlist" value="true"/>
+        <property key="default-bitfield-type" value="true"/>
+        <property key="default-char-type" value="true"/>
         <property key="define-macros" value="ADAPTER_TYPE=0x10"/>
         <property key="disable-optimizations" value="false"/>
         <property key="extra-include-directories" value=""/>
         <property key="favor-optimization-for" value="+speed,-space"/>
+        <property key="garbage-collect-data" value="true"/>
+        <property key="garbage-collect-functions" value="true"/>
         <property key="identifier-length" value="255"/>
         <property key="local-generation" value="false"/>
         <property key="operation-mode" value="pro"/>
@@ -2292,14 +2400,14 @@
         <property key="optimization-assembler" value="true"/>
         <property key="optimization-assembler-files" value="true"/>
         <property key="optimization-debug" value="false"/>
-        <property key="optimization-global" value="true"/>
         <property key="optimization-invariant-enable" value="false"/>
         <property key="optimization-invariant-value" value="16"/>
-        <property key="optimization-level" value="9"/>
-        <property key="optimization-set" value="default"/>
+        <property key="optimization-level" value="-O3"/>
         <property key="optimization-speed" value="true"/>
         <property key="optimization-stable-enable" value="false"/>
+        <property key="pack-struct" value="true"/>
         <property key="preprocess-assembler" value="true"/>
+        <property key="short-enums" value="true"/>
         <property key="undefine-macros" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
@@ -2324,11 +2432,14 @@
         <property key="create-html-files" value="false"/>
         <property key="data-model-ram" value=""/>
         <property key="data-model-size-of-double" value="24"/>
+        <property key="data-model-size-of-double-gcc" value="short-double"/>
         <property key="data-model-size-of-float" value="24"/>
+        <property key="data-model-size-of-float-gcc" value="short-float"/>
         <property key="display-class-usage" value="false"/>
         <property key="display-hex-usage" value="false"/>
         <property key="display-overall-usage" value="true"/>
         <property key="display-psect-usage" value="false"/>
+        <property key="extra-lib-directories" value=""/>
         <property key="fill-flash-options-addr" value="0x0800:0x7FFF"/>
         <property key="fill-flash-options-const" value="0xFFFF"/>
         <property key="fill-flash-options-how" value="1"/>
@@ -2338,14 +2449,17 @@
         <property key="fill-flash-options-what" value="2"/>
         <property key="format-hex-file-for-download" value="false"/>
         <property key="initialize-data" value="true"/>
+        <property key="input-libraries" value="libm"/>
         <property key="keep-generated-startup.as" value="false"/>
         <property key="link-in-c-library" value="true"/>
+        <property key="link-in-c-library-gcc" value=""/>
         <property key="link-in-peripheral-library" value="true"/>
         <property key="managed-stack" value="false"/>
         <property key="opt-xc8-linker-file" value="false"/>
         <property key="opt-xc8-linker-link_startup" value="false"/>
         <property key="opt-xc8-linker-serial" value=""/>
         <property key="program-the-device-with-default-config-words" value="true"/>
+        <property key="remove-unused-sections" value="true"/>
       </HI-TECH-LINK>
       <PICkit3PlatformTool>
         <property key="AutoSelectMemRanges" value="auto"/>
@@ -2354,6 +2468,7 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="debugoptions.useswbreakpoints" value="false"/>
         <property key="hwtoolclock.frcindebug" value="false"/>
         <property key="memories.aux" value="false"/>
         <property key="memories.bootflash" value="true"/>
@@ -2627,11 +2742,16 @@
       </Simulator>
       <XC8-config-global>
         <property key="advanced-elf" value="true"/>
+        <property key="gcc-opt-driver-new" value="false"/>
+        <property key="gcc-opt-std" value="--std=c89"/>
+        <property key="gcc-output-file-format" value="dwarf-3"/>
+        <property key="omit-pack-options" value="false"/>
         <property key="output-file-format" value="-mcof,+elf"/>
         <property key="stack-size-high" value="auto"/>
         <property key="stack-size-low" value="auto"/>
         <property key="stack-size-main" value="auto"/>
         <property key="stack-type" value="compiled"/>
+        <property key="user-pack-device-support" value=""/>
       </XC8-config-global>
     </conf>
   </confs>

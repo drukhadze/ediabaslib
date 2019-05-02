@@ -1,10 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using Els_kom.Compression.Libs.Zlib;
 using ICSharpCode.SharpZipLib.Core;
 using ICSharpCode.SharpZipLib.Zip;
 
@@ -12,6 +15,16 @@ namespace FileDecoder
 {
     static class Program
     {
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+        private static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)]string lpFileName);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int LoadString(IntPtr hInstance, int id, StringBuilder lpBuffer, int nBufferMax);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool FreeLibrary(IntPtr hModule);
+
         enum ResultCode
         {
             Ok,
@@ -19,8 +32,7 @@ namespace FileDecoder
             Done,
         }
 
-        // from string resource 383;
-        private const string VersionCodeString = "6da97491a5097b22";
+        static readonly byte[] CryptTabIndex = { 0x23, 0x12, 0x21, 0x42, 0x51, 0x14, 0x47, 0x67 };
         static readonly byte[] CryptTab1 =
         {
             0x56, 0x15, 0x8F, 0xDB, 0xC5, 0x2A, 0x05, 0x7D, 0x19, 0xC8, 0xE5, 0x36, 0xA4, 0xB6, 0x91, 0x5E,
@@ -92,12 +104,14 @@ namespace FileDecoder
             0xCD, 0xA3, 0x7B, 0x15, 0x56, 0x1C, 0x1B, 0x57, 0x67, 0xA0, 0xA9, 0x9E, 0x04, 0xB6, 0xE5, 0xB7
         };
 
-        private static int _versionCode;
-        private static string _versionCodeString;
+        private static int _fileVersionCode;
+        private static int _typeCode;
+        private static string _typeCodeString;
         private static UInt32 _holdrand;
 
         static int Main(string[] args)
         {
+            Console.OutputEncoding = Encoding.Unicode;
             if (args.Length < 1)
             {
                 Console.WriteLine("No input file specified");
@@ -114,36 +128,45 @@ namespace FileDecoder
             }
 
             string zipDir = dir;
-            string typeCodeString = "USA";
             if (args.Length >= 2)
             {
-                if (args[1].Length == 3)
-                {
-                    typeCodeString = args[1];
-                }
-                else
-                {
-                    zipDir = args[1];
-                }
+                zipDir = args[1];
             }
-
-            if (typeCodeString.Length != 3)
-            {
-                Console.WriteLine("Type code string length must be 3");
-                return 1;
-            }
-
             try
             {
-                _versionCode = DecryptVersionCodeString(VersionCodeString);
-                if (_versionCode < 0)
+                string exePath = Path.Combine(dir, "VCDS.exe");
+                try
                 {
-                    Console.WriteLine("Decryption of version code failed");
+                    FileVersionInfo fileVersionInfo = FileVersionInfo.GetVersionInfo(exePath);
+                    int verMajor = fileVersionInfo.FileMajorPart;
+                    int verMinor = fileVersionInfo.FileMinorPart;
+                    int verBuild = fileVersionInfo.FileBuildPart;
+                    _fileVersionCode = (verMajor << 8) | ((verMinor & 0xF) << 4) | (verBuild & 0xF);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("*** Reading file version failed: {0}", e.Message);
+                    return 1;
+                }
+                Console.WriteLine("Extracted file version code: {0:X04}", _fileVersionCode);
+
+                string typeCodeKey = ExtractStringFromDll(exePath, 383);
+                if (typeCodeKey == null)
+                {
+                    Console.WriteLine("*** Extracting type code key failed");
+                    return 1;
+                }
+                Console.WriteLine("Extracted type code key: {0}", typeCodeKey);
+
+                _typeCode = DecryptTypeCodeString(_fileVersionCode, typeCodeKey);
+                if (_typeCode < 0)
+                {
+                    Console.WriteLine("Decryption of type code failed");
                     return 1;
                 }
 
-                _versionCodeString = VersionCodeToString(_versionCode);
-                Console.WriteLine("Version code: {0:X04} {1}", _versionCode, _versionCodeString);
+                _typeCodeString = TypeCodeToString(_typeCode);
+                Console.WriteLine("Type code: {0:X04} {1}", _typeCode, _typeCodeString);
 
                 string[] files = Directory.GetFiles(dir, searchPattern, SearchOption.AllDirectories);
                 foreach (string file in files)
@@ -154,8 +177,8 @@ namespace FileDecoder
                         Console.WriteLine("*** No relative path for: {0}", file);
                         continue;
                     }
-                    string zipOutDir = Path.Combine(zipDir, relPath);
-                    string baseFileName = Path.GetFileName(file);
+                    string zipOutDir = Path.Combine(zipDir, relPath.ToLowerInvariant());
+                    string baseFileName = (Path.GetFileName(file) ?? string.Empty).ToLowerInvariant();
                     string ext = Path.GetExtension(file);
                     if (string.Compare(ext, @".rod", StringComparison.OrdinalIgnoreCase) == 0)
                     {
@@ -167,7 +190,7 @@ namespace FileDecoder
                         }
                         else
                         {
-                            string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "uds") ?? string.Empty);
+                            string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "uds"));
                             if (!CreateZip(new List<string>() {outFile}, "uds", zipFileName))
                             {
                                 Console.WriteLine("*** Compression failed: {0}", file);
@@ -178,13 +201,13 @@ namespace FileDecoder
                     {
                         Console.WriteLine("Decrypting: {0}", file);
                         string outFile = Path.ChangeExtension(file, @".lbl");
-                        if (!DecryptFile(file, outFile, typeCodeString))
+                        if (!DecryptClbFile(file, outFile))
                         {
                             Console.WriteLine("*** Decryption failed: {0}", file);
                         }
                         else
                         {
-                            string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "ldat") ?? string.Empty);
+                            string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "ldat"));
                             if (!CreateZip(new List<string>() { outFile }, "ldat", zipFileName))
                             {
                                 Console.WriteLine("*** Compression failed: {0}", file);
@@ -195,13 +218,13 @@ namespace FileDecoder
                     {
                         Console.WriteLine("Decrypting: {0}", file);
                         string outFile = Path.ChangeExtension(file, @".dattxt");
-                        if (!DecryptErrorCodeFile(file, outFile))
+                        if (!DecryptDatFile(file, outFile))
                         {
                             Console.WriteLine("*** Decryption failed: {0}", file);
                         }
                         else
                         {
-                            string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "cdat") ?? string.Empty);
+                            string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "cdat"));
                             if (!CreateZip(new List<string>() { outFile }, "cdat", zipFileName))
                             {
                                 Console.WriteLine("*** Compression failed: {0}", file);
@@ -212,7 +235,7 @@ namespace FileDecoder
                     {
                         Console.WriteLine("Compressing: {0}", file);
                         string inFile = Path.ChangeExtension(file, @".lbl");
-                        string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "ldat") ?? string.Empty);
+                        string zipFileName = Path.Combine(zipOutDir, Path.ChangeExtension(baseFileName, "ldat"));
                         if (!CreateZip(new List<string>() { inFile }, "ldat", zipFileName))
                         {
                             Console.WriteLine("*** Compression failed: {0}", file);
@@ -222,11 +245,28 @@ namespace FileDecoder
             }
             catch (Exception e)
             {
-                Console.WriteLine(e);
-                throw;
+                Console.WriteLine("*** Exception: {0}", e.Message);
+                return 1;
             }
 
             return 0;
+        }
+
+        public static string ExtractStringFromDll(string file, int number)
+        {
+            IntPtr lib = LoadLibrary(file);
+            if (lib == IntPtr.Zero)
+            {
+                return null;
+            }
+            StringBuilder result = new StringBuilder(2048);
+            int count = LoadString(lib, number, result, result.Capacity);
+            FreeLibrary(lib);
+            if (count == 0)
+            {
+                return null;
+            }
+            return result.ToString();
         }
 
         public static string MakeRelativePath(string fromPath, string toPath)
@@ -261,8 +301,7 @@ namespace FileDecoder
         public static string AppendDirectorySeparatorChar(string path)
         {
             // Append a slash only if the path is a directory and does not have a slash.
-            if (!Path.HasExtension(path) &&
-                !path.EndsWith(Path.DirectorySeparatorChar.ToString()))
+            if (!path.EndsWith(Path.DirectorySeparatorChar.ToString()))
             {
                 return path + Path.DirectorySeparatorChar;
             }
@@ -350,17 +389,18 @@ namespace FileDecoder
             return BitConverter.ToString(result).Replace("-", "");
         }
 
-        static bool DecryptFile(string inFile, string outFile, string typeCodeString)
+        static bool DecryptClbFile(string inFile, string outFile)
         {
             bool extendedCode = false;
             DirectoryInfo dirInfo = Directory.GetParent(inFile);
+            string typeCodeString = "USA";
             if (dirInfo != null)
             {
                 string parentDir = dirInfo.Name;
-                if (string.Compare(parentDir, _versionCodeString, StringComparison.OrdinalIgnoreCase) == 0)
+                if (string.Compare(parentDir, _typeCodeString, StringComparison.OrdinalIgnoreCase) == 0)
                 {
                     extendedCode = true;
-                    typeCodeString = _versionCodeString;
+                    typeCodeString = _typeCodeString;
                 }
             }
 
@@ -373,7 +413,7 @@ namespace FileDecoder
                     return false;
                 }
 
-                int codeOffset = _versionCode * inFile[dotIdx] * inFile[dotIdx - 1] * inFile[dotIdx - 2];
+                int codeOffset = _typeCode * inFile[dotIdx] * inFile[dotIdx - 1] * inFile[dotIdx - 2];
                 typeCode += (byte) codeOffset;
             }
 
@@ -385,7 +425,7 @@ namespace FileDecoder
                     {
                         for (int line = 0; ; line++)
                         {
-                            byte[] data = DecryptLine(fsRead, line, typeCode);
+                            byte[] data = DecryptClbLine(fsRead, line, typeCode);
                             if (data == null)
                             {
                                 return false;
@@ -398,6 +438,15 @@ namespace FileDecoder
                             {
                                 if (!IsValidText(data))
                                 {
+#if false
+                                    Encoding enc1 = Encoding.GetEncoding(1251);
+                                    string asc1 = enc1.GetString(data);
+                                    Console.WriteLine("Invalid: {0}", asc1);
+#endif
+#if true
+                                    Console.WriteLine("Invalid decrypted text");
+                                    return false;
+#else
                                     Console.WriteLine("Type code invalid, trying all values");
                                     bool found = false;
                                     for (int code = 0; code < 0x100; code++)
@@ -419,9 +468,9 @@ namespace FileDecoder
                                             if (!IsValidText(data))
                                             {
 #if false
-                                                System.Text.ASCIIEncoding ascii = new System.Text.ASCIIEncoding();
-                                                string asc = ascii.GetString(data);
-                                                Console.WriteLine("Invalid: {0}", asc);
+                                                Encoding enc2 = Encoding.GetEncoding(1251);
+                                                string asc2 = enc2.GetString(data);
+                                                Console.WriteLine("Invalid: {0}", asc2);
 #endif
                                                 bValid = false;
                                                 break;
@@ -444,6 +493,7 @@ namespace FileDecoder
                                         Console.WriteLine("Type code not found");
                                         return false;
                                     }
+#endif
                                 }
                             }
 
@@ -474,7 +524,13 @@ namespace FileDecoder
             {
                 return false;
             }
-            for (int i = 0; i < 6; i++)
+
+            if (data[0] == '#' || data[0] == ':')
+            {
+                return true;
+            }
+
+            for (int i = 0; i < 3; i++)
             {
                 byte value = data[i];
                 if (i == 0)
@@ -496,17 +552,28 @@ namespace FileDecoder
             return true;
         }
 
-        static bool DecryptErrorCodeFile(string inFile, string outFile)
+        static bool DecryptDatFile(string inFile, string outFile)
         {
             try
             {
+                string baseName = Path.GetFileNameWithoutExtension(inFile);
+                if (baseName == null)
+                {
+                    return false;
+                }
+                string typeName = "-" + _typeCodeString.ToUpperInvariant();
+                int versionCode = 0;
+                if (baseName.EndsWith(typeName))
+                {
+                    versionCode = _typeCode;
+                }
                 using (FileStream fsRead = new FileStream(inFile, FileMode.Open))
                 {
                     using (FileStream fsWrite = new FileStream(outFile, FileMode.Create))
                     {
                         for (; ; )
                         {
-                            byte[] data = DecryptErrorCodeLine(fsRead);
+                            byte[] data = DecryptStdLine(fsRead, versionCode, false);
                             if (data == null)
                             {
                                 return false;
@@ -533,7 +600,7 @@ namespace FileDecoder
             }
         }
 
-        static byte[] DecryptLine(FileStream fs, int line, byte typeCode)
+        static byte[] DecryptClbLine(FileStream fs, int line, byte typeCode)
         {
             try
             {
@@ -607,7 +674,7 @@ namespace FileDecoder
             }
         }
 
-        static byte[] DecryptErrorCodeLine(FileStream fs)
+        static byte[] DecryptStdLine(FileStream fs, int versionCode, bool segmentFile)
         {
             try
             {
@@ -624,6 +691,14 @@ namespace FileDecoder
                     {
                         continue;
                     }
+
+                    if (segmentFile)
+                    {
+                        if (value == '[')
+                        {
+                            return new byte[0]; // end of segment
+                        }
+                    }
                     if (value == ' ')
                     {
                         numberValid = true;
@@ -637,12 +712,12 @@ namespace FileDecoder
                     return null;
                 }
 
-                if (sbNumber.Length < 8)
+                if (sbNumber.Length != 6 && sbNumber.Length != 8)
                 {
                     return null;
                 }
 
-                if (!UInt32.TryParse(sbNumber.ToString(), out UInt32 lineNumber))
+                if (!UInt32.TryParse(sbNumber.ToString(), out UInt32 _))
                 {
                     return null;
                 }
@@ -669,7 +744,7 @@ namespace FileDecoder
                     return null;
                 }
 
-                byte[] prefix = Encoding.ASCII.GetBytes(string.Format(CultureInfo.InvariantCulture, "{0:00000000},", lineNumber));
+                byte[] prefix = Encoding.ASCII.GetBytes(sbNumber + ",");
                 if (dataLenIn <= 0)
                 {
                     return prefix;
@@ -687,25 +762,33 @@ namespace FileDecoder
                     buffer[i >> 2] = BitConverter.ToUInt32(data, i);
                 }
 
-                string maskString = string.Format(CultureInfo.InvariantCulture, "{0:00000000}", lineNumber);
-                byte[] maskBuffer = Encoding.ASCII.GetBytes(maskString);
+                if (sbNumber.Length == 6)
+                {
+                    sbNumber.Append(sbNumber[4]);
+                    sbNumber.Append(sbNumber[3]);
+                }
+                byte[] maskBuffer = Encoding.ASCII.GetBytes(sbNumber.ToString());
 
                 Int32 cryptCode = sbNumber[5];
                 Int32 cryptOffet = cryptCode * 2;
                 for (int i = 0; i < 8; i++)
                 {
-                    maskBuffer[i] += (byte) (_versionCode + CryptTab2[(byte) cryptOffet]);
+                    if (_fileVersionCode >= 0x1180)
+                    {
+                        maskBuffer[i] += (byte)(versionCode + CryptTab2[(byte)cryptOffet]);
+                    }
+                    else
+                    {
+                        maskBuffer[i] += CryptTab2[(byte)cryptOffet];
+                        maskBuffer[i] += (byte)versionCode;
+                    }
                     cryptOffet += cryptCode;
                 }
 
-                maskBuffer[0] *= CryptTab1[0x76];
-                maskBuffer[1] *= CryptTab1[0xC3];
-                maskBuffer[2] *= CryptTab1[0x88];
-                maskBuffer[3] *= CryptTab1[0x3E];
-                maskBuffer[4] *= CryptTab1[0x99];
-                maskBuffer[5] *= CryptTab1[0x22];
-                maskBuffer[6] *= CryptTab1[0xCA];
-                maskBuffer[7] *= CryptTab1[0x07];
+                for (int i = 0; i < maskBuffer.Length; i++)
+                {
+                    maskBuffer[i] *= CryptTab1[CryptTab2[CryptTabIndex[i]]];
+                }
 
                 UInt32[] mask = new UInt32[2];
                 mask[0] = BitConverter.ToUInt32(maskBuffer, 0);
@@ -740,7 +823,15 @@ namespace FileDecoder
                     {
                         for (;;)
                         {
-                            ResultCode resultCode = DecryptSegment(fsRead, fsWrite, inFile);
+                            ResultCode resultCode;
+                            if (_fileVersionCode >= 0x1180)
+                            {
+                                resultCode = DecryptSegmentZipLib(fsRead, fsWrite, inFile);
+                            }
+                            else
+                            {
+                                resultCode = DecryptSegmentStd(fsRead, fsWrite, inFile);
+                            }
                             if (resultCode == ResultCode.Error)
                             {
                                 return false;
@@ -761,7 +852,7 @@ namespace FileDecoder
             }
         }
 
-        static ResultCode DecryptSegment(FileStream fsRead, FileStream fsWrite, string fileName)
+        static ResultCode DecryptSegmentZipLib(FileStream fsRead, FileStream fsWrite, string fileName)
         {
             try
             {
@@ -966,9 +1057,10 @@ namespace FileDecoder
             }
 
             int offset = 0;
-            if (baseName.StartsWith("TTTEXT") || baseName.StartsWith("UNIT"))
+            string typeName = "-" + _typeCodeString.ToUpperInvariant();
+            if ((baseName.StartsWith("TTTEXT") || baseName.StartsWith("UNIT")) && baseName.EndsWith(typeName))
             {
-                offset = _versionCode;
+                offset = _typeCode;
             }
 
             int factor = (byte)segmentName[1];
@@ -978,13 +1070,111 @@ namespace FileDecoder
                 mask[i] += (byte)offset;
             }
 
-            byte[] tabIndex = { 0x76, 0xC3, 0x88, 0x3E, 0x99, 0x22, 0xCA, 0x07 };
             for (int i = 0; i < mask.Length; i++)
             {
-                mask[i] *= CryptTab1[tabIndex[i]];
+                mask[i] *= CryptTab1[CryptTab2[CryptTabIndex[i]]];
             }
 
             return mask;
+        }
+
+        static ResultCode DecryptSegmentStd(FileStream fsRead, FileStream fsWrite, string fileName)
+        {
+            try
+            {
+                string baseName = Path.GetFileNameWithoutExtension(fileName);
+                if (baseName == null)
+                {
+                    return ResultCode.Error;
+                }
+                string typeName = "-" + _typeCodeString.ToUpperInvariant();
+                int versionCode = 0;
+                if (baseName.EndsWith(typeName))
+                {
+                    versionCode = _typeCode;
+                }
+
+                StringBuilder sb = new StringBuilder();
+                bool startFound = false;
+                for (; ; )
+                {
+                    int value = fsRead.ReadByte();
+                    if (value < 0)
+                    {
+                        return ResultCode.Done;
+                    }
+                    if (value == '[')
+                    {
+                        startFound = true;
+                    }
+                    if (sb.Length == 0 && value >= '0' && value <= '9')
+                    {
+                        // no segment name, direct start with number
+                        fsRead.Position--;
+                        sb.Append("[]");
+                        break;
+                    }
+                    if (!startFound)
+                    {
+                        continue;
+                    }
+                    if (value == 0x0A && sb.Length > 0)
+                    {
+                        break;
+                    }
+                    if (value != 0x0A && value != 0x0D)
+                    {
+                        sb.Append((char)value);
+                    }
+                }
+                string segmentNameLine = sb.ToString();
+                if (segmentNameLine.Length < 2 || segmentNameLine[0] != '[' || segmentNameLine[segmentNameLine.Length - 1] != ']')
+                {
+                    return ResultCode.Error;
+                }
+                string segmentName = segmentNameLine.Substring(1, segmentNameLine.Length - 2);
+
+                ASCIIEncoding ascii = new ASCIIEncoding();
+                byte[] segmentData = ascii.GetBytes(segmentName);
+                fsWrite.WriteByte((byte)'[');
+                fsWrite.Write(segmentData, 0, segmentData.Length);
+                fsWrite.WriteByte((byte)']');
+                fsWrite.WriteByte((byte)'\r');
+                fsWrite.WriteByte((byte)'\n');
+
+                for (; ; )
+                {
+                    byte[] data = DecryptStdLine(fsRead, versionCode, true);
+                    if (data == null)
+                    {
+                        return ResultCode.Error;
+                    }
+                    if (data.Length == 0)
+                    {   // end of segment
+                        break;
+                    }
+
+                    foreach (byte value in data)
+                    {
+                        fsWrite.WriteByte(value);
+                    }
+                    fsWrite.WriteByte((byte)'\r');
+                    fsWrite.WriteByte((byte)'\n');
+                }
+
+                fsWrite.WriteByte((byte)'[');
+                fsWrite.WriteByte((byte)'/');
+                fsWrite.Write(segmentData, 0, segmentData.Length);
+                fsWrite.WriteByte((byte)']');
+                fsWrite.WriteByte((byte)'\r');
+                fsWrite.WriteByte((byte)'\n');
+
+                return ResultCode.Ok;
+            }
+            catch (Exception)
+            {
+                return ResultCode.Error;
+            }
         }
 
         static bool DecryptBlock(UInt32[] mask, UInt32[] buffer, int codeTable)
@@ -1058,11 +1248,11 @@ namespace FileDecoder
         static void DecompressData(byte[] inData, Stream fsout, int bytes)
         {
             using (MemoryStream outMemoryStream = new MemoryStream())
-            using (ZOutputStreamMod outZStream = new ZOutputStreamMod(outMemoryStream))
+            using (ZOutputStream outZStream = new ZOutputStream(outMemoryStream))
             using (Stream inMemoryStream = new MemoryStream(inData))
             {
                 CopyStream(inMemoryStream, outZStream, inData.Length);
-                outZStream.finish();
+                outZStream.Flush();
                 outMemoryStream.Position = 0;
                 CopyStream(outMemoryStream, fsout, bytes);
             }
@@ -1242,26 +1432,29 @@ namespace FileDecoder
             return (_holdrand >> 16) & 0x7FFF;
         }
 
-        static int DecryptVersionCodeString(string typeCode)
+        static int DecryptTypeCodeString(int fileVersionCode, string typeCodeKey)
         {
-            if (!UInt64.TryParse(typeCode, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out UInt64 value))
+            if (!UInt64.TryParse(typeCodeKey, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out UInt64 value))
             {
-                return -1;
+                return 0;
             }
 
             byte[] data = BitConverter.GetBytes(value);
 
-            int pos = 0x18;
+            byte code1 = (byte) ((fileVersionCode >> 4) & 0xFF);
+            byte code2 = (byte) ((code1 + fileVersionCode + 3) & 0xFF);
+            byte code3 = (byte) ((-code1 + fileVersionCode + 3) & 0xFF);
+            int pos = code1;
             for (int i = 0; i < 8; i++)
             {
                 byte tempCode = (byte) (data[i] ^ CryptTab2[i]);
                 data[i] ^= CryptTab2[pos];
-                pos = tempCode + 0x9B;
+                pos = tempCode + code2;
             }
 
             UInt64 convVal = BitConverter.ToUInt64(data, 0);
-            convVal -= 0x6B;
-            UInt64 code = convVal / 0x1180;
+            convVal -= code3;
+            UInt64 code = convVal / (UInt64) fileVersionCode;
             if (code > 0xFFF)
             {
                 return -1;
@@ -1270,14 +1463,14 @@ namespace FileDecoder
             return (int) code;
         }
 
-        static string VersionCodeToString(int versionCode)
+        static string TypeCodeToString(int typeCode)
         {
-            byte versionLow = (byte)versionCode;
-            if (versionLow <= 0x48)
+            byte typeLow = (byte)typeCode;
+            if (typeLow <= 0x48)
             {
-                if (versionLow <= 0x30)
+                if (typeLow <= 0x30)
                 {
-                    switch (versionLow)
+                    switch (typeLow)
                     {
                         case 0x30:
                             return "NEZ";
@@ -1298,7 +1491,7 @@ namespace FileDecoder
                     return "INVALID";
                 }
 
-                switch (versionLow)
+                switch (typeLow)
                 {
                     case 0x34:
                         return "AER";
@@ -1315,9 +1508,9 @@ namespace FileDecoder
                 }
             }
 
-            if (versionLow <= 0xA0)
+            if (typeLow <= 0xA0)
             {
-                switch (versionLow)
+                switch (typeLow)
                 {
                     case 0xA0:
                         return "HGJ";
@@ -1335,7 +1528,7 @@ namespace FileDecoder
                 return "INVALID";
             }
 
-            switch (versionLow)
+            switch (typeLow)
             {
                 case 0xA1:
                     return "ROJ";

@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using NDesk.Options;
+using UdsFileReader;
 
 namespace LogfileConverter
 {
@@ -252,6 +252,7 @@ namespace LogfileConverter
                 string line;
                 string readString = string.Empty;
                 string writeString = string.Empty;
+                string lastCfgLine = string.Empty;
                 while ((line = streamReader.ReadLine()) != null)
                 {
                     if (line.Length > 0)
@@ -300,6 +301,43 @@ namespace LogfileConverter
                                 }
                             }
                         }
+
+                        MatchCollection canEdicIsoTpEcuOverrideMatches = Regex.Matches(line, @"^Overriding UDS ECU CAN ID with (....)");
+                        if (canEdicIsoTpEcuOverrideMatches.Count == 1)
+                        {
+                            if (canEdicIsoTpEcuOverrideMatches[0].Groups.Count == 2)
+                            {
+                                try
+                                {
+                                    _edicCanEcuAddr = Convert.ToInt32(canEdicIsoTpEcuOverrideMatches[0].Groups[1].Value, 16);
+                                    _edicCanMode = false;
+                                    _edicCanIsoTpMode = true;
+                                }
+                                catch (Exception)
+                                {
+                                    // ignored
+                                }
+                            }
+                        }
+
+                        MatchCollection canEdicIsoTpTesterOverrideMatches = Regex.Matches(line, @"^Overriding UDS tester CAN ID with (....)");
+                        if (canEdicIsoTpTesterOverrideMatches.Count == 1)
+                        {
+                            if (canEdicIsoTpTesterOverrideMatches[0].Groups.Count == 2)
+                            {
+                                try
+                                {
+                                    _edicCanTesterAddr = Convert.ToInt32(canEdicIsoTpTesterOverrideMatches[0].Groups[1].Value, 16);
+                                    _edicCanMode = false;
+                                    _edicCanIsoTpMode = true;
+                                }
+                                catch (Exception)
+                                {
+                                    // ignored
+                                }
+                            }
+                        }
+
                         if (Regex.IsMatch(line, @"^ \((Send|Resp)\):"))
                         {
                             bool send = Regex.IsMatch(line, @"^ \(Send\):");
@@ -310,8 +348,32 @@ namespace LogfileConverter
                             {
                                 if (send)
                                 {
+                                    string cfgLineWrite = null;
                                     if (_edicCanIsoTpMode)
                                     {
+                                        if (_responseFile)
+                                        {
+                                            int deviceAddress = -1;
+                                            foreach (VehicleInfoVag.EcuAddressEntry ecuAddressEntry in VehicleInfoVag.EcuAddressArray)
+                                            {
+                                                if (ecuAddressEntry.IsoTpEcuCanId == _edicCanEcuAddr && ecuAddressEntry.IsoTpTesterCanId == _edicCanTesterAddr)
+                                                {
+                                                    deviceAddress = (int)ecuAddressEntry.Address;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (deviceAddress >= 0)
+                                            {
+                                                string cfgLine = $"CFG: {deviceAddress:X02} {(_edicCanEcuAddr >> 8):X02} {(_edicCanEcuAddr & 0xFF):X02} {(_edicCanTesterAddr >> 8):X02} {(_edicCanTesterAddr & 0xFF):X02}";
+                                                if (string.Compare(lastCfgLine, cfgLine, StringComparison.Ordinal) != 0)
+                                                {
+                                                    lastCfgLine = cfgLine;
+                                                    cfgLineWrite = cfgLine;
+                                                }
+                                            }
+                                        }
+
                                         // convert to KWP2000 format
                                         int dataLength = lineValues.Count;
                                         if (dataLength < 0x3F)
@@ -360,6 +422,11 @@ namespace LogfileConverter
                                         else
                                         {
                                             writeString = string.Empty;
+                                        }
+
+                                        if (!string.IsNullOrEmpty(cfgLineWrite))
+                                        {
+                                            streamWriter.WriteLine(cfgLineWrite);
                                         }
                                     }
                                     else

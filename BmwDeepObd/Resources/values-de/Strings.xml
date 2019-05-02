@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- ReSharper disable MarkupAttributeTypo -->
+<!-- ReSharper disable MarkupTextTypo -->
 <resources>
   <string name="library_name">DeepObd</string>
   <string name="app_name">Deep OBD für BMW und VAG</string>
@@ -11,6 +13,8 @@
   <string name="button_select">Auswählen</string>
   <string name="button_generate">Generieren</string>
   <string name="button_copy">Kopieren</string>
+  <string name="button_accept">Akzeptieren</string>
+  <string name="button_decline">Ablehnen</string>
   <string name="button_donate">Spenden</string>
   <string name="back_button_twice_for_exit">Die Schaltfläche zwei mal drücken zum Beenden</string>
   <string name="no_ext_storage">Kein externer Speicher verfügbar</string>
@@ -26,7 +30,9 @@
   <string name="ecu_package">Es stehen aktualisierte ECU Dateien für diese Anwendung zur Verfügung.</string>
   <string name="ecu_download">Wollen Sie jetzt die ECU Dateien herunterladen (Dateigröße ca. {0:fs1})?</string>
   <string name="manufacturer_select">Der aktuelle Hersteller ist {0}, um einen anderen zu wählen drücken Sie bitte \'Abbrechen\'.</string>
-  <string name="ecu_extract">Die ECU Dateien müssen entpackt werden (Größe ca. {0:fs1}),\nder Download von Update-Informationen ist hierfür notwendig.\nWollen Sie fortfahren?</string>
+  <string name="storage_requirements">Dies ist ein Expertentool.\nKeine Haftung bei Fehlfunktion oder Schäden am Fahrzeug.\nDiese App benötigt ein schnelles Speichermedium mit einem freien Speicherbereich von mindestens {0:fs1}.\nDie Verwendung der App ist nicht zulässig, wenn diese Bedingung nicht akzeptiert wird.</string>
+  <string name="ecu_extract">Die ECU Dateien müssen entpackt werden (Größe ca. {0:fs1}),\nder Download von Update-Informationen ist hierfür notwendig.\nWenn das Entpacken sehr langsam ist, verwenden Sie bitte ein schnelleres Speichermedium.\nWollen Sie fortfahren?</string>
+  <string name="ecu_extract_confirm">Für das Entpacken der ECU Dateien (Größe ca. {0:fs1})\nist der Download von Update-Informationen notwendig.\nWenn das Entpacken sehr langsam ist, verwenden Sie bitte ein schnelleres Speichermedium.\nWollen Sie fortfahren?</string>
   <string name="error_no_error">Keine Fehler vorhanden</string>
   <string name="error_reading_errors">Fehlerspeicher lesen: {0}%</string>
   <string name="error_no_response">Keine Antwort</string>
@@ -36,9 +42,9 @@
 \nSie können gerne mitwirken oder Probleme melden.
 \nEine detailierte Dokumentation kann auch auf dieser Webseite gefunden werden.
 \n\nÄnderungen in dieser Version:\n</string>
-  <string name="version_last_changes">- Kleinere Probleme behoben</string>
+  <string name="version_last_changes">- Verbessertes OBB and Trace-Datei Handling\n- Kleinere Probleme behoben</string>
   <string name="app_info_message">Deep OBD für BMW und VAG\nVersion: {0}\nId: {1}</string>
-  <string name="vag_mode_info">Der VAG Modus ist noch experimentell.\nEs wird ein <a href='https://github.com/uholeschak/ediabaslib/blob/master/docs/Replacement_firmware_for_ELM327.md'>Deep OBD Adapter</a> mit mindestens Firmwareversion 0.8 benötigt.\nIm Moment werden nur die Protokolle KWP2000, KWP1281 und TP2.0 (Fahrzeuge bis 4.2012) unterstützt.</string>
+  <string name="vag_mode_info">Der VAG Modus ist noch experimentell.\nEs wird ein <a href='https://github.com/uholeschak/ediabaslib/blob/master/docs/Replacement_firmware_for_ELM327.md'>Deep OBD Adapter</a> mit mindestens Firmwareversion 0.11 benötigt.\nIm Moment werden nur die Protokolle KWP2000, KWP1281, TP2.0 und UDS unterstützt.\nFür den neuen VAG Modus müssen die Konfiguration neu generiert werden.\nEs ist möglich den alten VAG Modus wieder in den globalen Einstellungen wählen.</string>
 
   <!-- Expansion downloader -->
   <string name="exp_down_paused_cellular">Wollen Sie den Download über eine Mobilfunkverbindung aktivieren? Dies kann zuätzlich Kosten verursachen.</string>
@@ -52,7 +58,7 @@
   <string name="exp_down_button_resume">Download fortsetzen</string>
   <string name="exp_down_button_cancel">Abbrechen</string>
   <string name="exp_down_button_cancel_verify">Überprüfung abbrechen</string>
-  <string name="exp_down_obb_missing">Die App wurde nicht von Google Play heruntergeladen und die Erweiterungsdatei fehlt.</string>
+  <string name="exp_down_obb_missing">Die App wurde nicht von Google Play heruntergeladen und die Erweiterungsdatei fehlt.\nLaden Sie die OBB-Datei mit einem APK Downloader von Google Play herunter und kopieren Sie diese mit dem Namen:\n\'{0}\'\nin eines der Verzeichnisse:\n{1}\nEs gibt dafür keinen Support, die Verwendung von Google Play ist der einzige empfohlene Weg.</string>
   <string name="exp_down_time_remaining">Verbleibende Zeit: {0}</string>
 
   <!-- Downloader library -->
@@ -102,7 +108,6 @@
   <string name="compile_cpu_usage">CPU Auslastung überprüfen</string>
   <string name="compile_cpu_usage_value">CPU Auslastung: {0}%</string>
   <string name="compile_cpu_usage_high">Die CPU Auslastung im Leerlauf ist sehr hoch ({0}%), dies kann Kommunikationsprobleme verursachen.\nBitte beenden Sie Hintergrund-Apps welche die CPU zu stark belasten.</string>
-  <string name="compile_vag_init">VAG Dateien lesen</string>
   <string name="compile_start">Anwendercode kompilieren</string>
   <string name="compile_crash">Die App ist beim Kompilieren des Anwerdercodes abgestürzt.\nEs gibt einen bekannten Compilerfehler:\nVerwenden Sie keine komplexen initialisierten Strukturen oder Arrays, initialisieren Sie diese im Konstruktor.</string>
 
@@ -115,16 +120,21 @@
   <string name="decrypt_file">Archiv vorbereiten</string>
   <string name="extract_file">Dateien entpacken</string>
   <string name="verify_files">Dateien überprüfen</string>
-  <string name="extract_failed">Das Entpacken der Dateien ist fehlgeschlagen.\nDie Zip-Datei scheint beschädigt zu sein.</string>
+  <string name="extract_failed">Das Entpacken der Dateien ist fehlgeschlagen.\nDie Zip-Datei scheint beschädigt zu sein.\nIn den meisten Fällen ist der Grund ein defektes Speichermedium.</string>
   <string name="extract_failed_io">Das Speichern der extrahierten Dateien ist fehlgeschlagen.\nIst kein Speicher mehr auf dem Gerät verfügbar?</string>
 
-  <!-- Send trace file -->
+  <!-- Init VAG UDS -->
+  <string name="vag_uds_init">VAG Dateien lesen</string>
+  <string name="vag_uds_error">VAG Dateien lesen fehlgeschlagen</string>
+
+    <!-- Send trace file -->
   <string name="send_trace_file_request">Es sind Kommunikationsfehler aufgetreten.\nWollen Sie eine komprimierte und anonyme Trace-Datei (Größe {0:fs0}) senden um Produktverbesserungen zu ermöglichen?</string>
   <string name="send_message_request">Es sind Kommunikationsfehler aufgetreten.\nWollen Sie anonyme Daten senden um Produktverbesserungen zu ermöglichen?</string>
   <string name="send_trace_file">Trace-Datei senden</string>
   <string name="compress_trace_file_failed">Trace-Datei komprimieren fehlgeschlagen.</string>
   <string name="send_trace_file_failed">Trace-Datei senden fehlgeschlagen.</string>
   <string name="send_trace_file_failed_retry">Trace-Datei senden fehlgeschlagen.\nBitte überprüfen Sie Ihre Netzwerkverbindung.\nWollen Sie das Senden wiederholen?</string>
+  <string name="send_trace_file_failed_message">Wollen Sie das Senden wiederholen?</string>
 
   <!-- Translate -->
   <string name="translate_text">Text wird übersetzt</string>
@@ -156,6 +166,7 @@
   <string name="none_paired">Keine Geräte sind gekoppelt</string>
   <string name="none_found">Keine Geräte gefunden</string>
   <string name="bt_not_enabled">Bluetooth ist nicht aktiviert</string>
+  <string name="bt_mtc_service_error">Der Bluetooth Service ist verbunden, sendet aber keine Daten.\nEs wird ein eingeschränkter Modus verwendet, bitte koppeln Sie die Geräte über das Telefonmenü.</string>
   <string name="title_paired_devices">Gekoppelte Geräte</string>
   <string name="title_other_devices">Andere verfügbare Geräte</string>
   <string name="button_scan">Nach Geräten suchen</string>
@@ -185,6 +196,7 @@
 
   <!-- tabs_errors -->
   <string name="button_error_reset">Fehler löschen</string>
+  <string name="button_error_reset_all">Alle Fehler löschen</string>
 
   <!-- Options Menu -->
   <string name="menu_settings">Einstellungen</string>
@@ -210,6 +222,7 @@
   <string name="datalog_append_trace">Tracefile anhängen</string>
   <string name="datalog_enable_datalog">Daten aufzeichnen</string>
   <string name="datalog_append_datalog">Logdaten anhängen</string>
+  <string name="datalog_no_tags">Es sind keine Tags für die Datenaufzeichnung vorhanden.\nUm die Datenaufzeichnung zu aktivieren, müssen Tags für die Datenaufzeichnung auf der ECU Seite des Konfigurationsgenerator angegeben werden.</string>
   <string name="datalog_date">Datum</string>
 
   <!-- FilePicker -->
@@ -225,9 +238,9 @@
   <!-- Interface selection -->
   <string name="select_interface">Interface auswählen</string>
   <string name="select_interface_bt">Bluetooth</string>
-  <string name="select_interface_enet">ENET</string>
+  <string name="select_interface_enet">ENET / Deep OBD WIFI</string>
   <string name="select_interface_elmwifi">ELM327 WIFI</string>
-  <string name="select_interface_deepobdwifi">Deep OBD WIFI</string>
+  <string name="select_interface_deepobdwifi">Deep OBD ELM WIFI</string>
   <string name="select_interface_ftdi">USB (FTDI)</string>
 
   <!-- Manufacturer selection -->
@@ -255,7 +268,8 @@
   <!-- ENET adapter config -->
   <string name="enet_adapter_web_info">Das Default-Password für das Adapter-Webinterface ist root.\nFalls der Adapter nach der Konfiguration nicht mehr erreichbar ist, müssen Sie den Adapter öffnen und die Resetaste drücken, nachdem der Adapter gebootet hat.</string>
   <string name="enet_adapter_wifi_info">Wenn Sie einen Deep OBD BMW Wi-Fi Adapter verwenden, wählen Sie den Access Point mit dem Namen \'Deep OBD BMW\', das Default-Password ist deepobdbmw.</string>
-  <string name="enet_adapter_ssid_warn">Sie sind nicht mit einem Deep OBD BMW Wi-Fi Adapter verbunden.\nWollen Sie einen anderen Access Point auswählen?</string>
+  <string name="enet_adapter_ssid_warn">Sie sind nicht mit einem Deep OBD BMW Wi-Fi oder Unichip ENET Wi-Fi Adapter verbunden.\nWollen Sie einen anderen Access Point auswählen?</string>
+  <string name="enet_ethernet_hint">Wenn Sie eine direkte Ethernet Kabelverbindung verwenden, müssen Sie den Android LAN Adapter mit einer Auto-IP Adresse konfigurieren,\nz.B. 169.254.1.10 / 255.255.0.0.</string>
 
   <!-- ELM327 Wi-Fi -->
   <string name="elmwifi_adapter_warn">Sie sind nicht mit einem ELM327 Wi-Fi Adapter verbunden.\nWollen Sie einen anderen Access Point auswählen?</string>
@@ -291,6 +305,8 @@
   <string name="settings_check_cpu_usage">CPU Auslastung am Start prüfen</string>
   <string name="settings_caption_check_ecu_files">ECU Dateien überprüfen</string>
   <string name="settings_check_ecu_files">ECU Dateien beim Start überprüfen</string>
+  <string name="settings_caption_old_vag_mode">VAG Modus</string>
+  <string name="settings_old_vag_mode">Alten VAG Modus verwenden</string>
   <string name="settings_caption_storage">Speichermedium</string>
   <string name="settings_caption_debug">Debuggen</string>
   <string name="settings_collect_debug_info">Debug-Informationen für Trace-Datei sammeln</string>
@@ -335,16 +351,17 @@
   <string name="xml_tool_no_mwtab">Es wurden keine Datentabellen für diese ECU gefunden</string>
   <string name="xml_tool_select_sgbd">Fahrzeugtyp auswählen</string>
   <string name="xml_tool_no_response">Keine Antwort vom Fahrzeug</string>
-  <string name="xml_tool_no_response_manual">Keine Antwort vom Fahrzeug.\nBei K-LINE Fahrzeugen wird ein USB oder Deep OBD Adapter benötigt.\nBei älteren Fahrzeuge ist nur eine manuelle Konfiguration möglich.\nHierfür müssen Sie in INPA die notwenigen .GRP oder .PRG Dateien auf der Info Seite jeder ECU ermitteln.\nWollen Sie auf <a href='https://github.com/uholeschak/ediabaslib/blob/master/docs/Configuration_Generator.md'>manuelle Konfiguration</a> umschalten?</string>
+  <string name="xml_tool_no_response_manual">Keine Antwort vom Fahrzeug.\nBei K-LINE Fahrzeugen wird ein USB oder Deep OBD Adapter benötigt.\nHier finden Sie eine Liste der <a href='https://github.com/uholeschak/ediabaslib/blob/master/docs/Configuration_Generator.md'>unterstützten Adapter</a>.</string>
   <string name="xml_tool_no_response_adapter">Keine Antwort vom Fahrzeug.\nWollen Sie die Adapter-Verbindung überprüfen?</string>
   <string name="xml_tool_read_jobs_failed">Jobs lesen fehlgeschlagen</string>
   <string name="xml_tool_aborting">Vorgang wird abgebrochen</string>
   <string name="xml_tool_read_ecu_info_failed">ECU Information lesen fehlgeschlagen</string>
   <string name="xml_tool_save_xml_failed">Konfiguration speichern fehlgeschlagen</string>
   <string name="xml_tool_msg_save_config">Wollen Sie die Konfiguration speichern?</string>
+  <string name="xml_tool_msg_save_config_select">Wollen Sie die Konfiguration speichern und als aktive Konfiguration verwenden?</string>
   <string name="xml_tool_msg_save_config_empty">Sie haben keine Daten für die Anzeige ausgewählt.\nKlicken Sie auf die ECUs und wählen Sie die gewünschen Jobs und Ergebnisse.\nWollen Sie die Konfiguration trotzdem speichern?</string>
   <string name="xml_tool_msg_ecu_error">Für einige ECUs konnten keine Information ermittelt werden.</string>
-  <string name="xml_tool_msg_pin78">Eine Verbindung zwischen den Adapter Pins 7 and 8 ist notwendig, um mehr ECUs erkennen zu können.</string>
+  <string name="xml_tool_msg_pin78">Eine Verbindung zwischen den Adapter Pins 7 and 8 ist notwendig, um mehr ECUs erkennen zu können.\nBei Fahrzeugen mit OBD I Buchse im Motorraum muss zusätzlich Pin 8 an der OBD II Buchse im Fahrzeug verbunden werden!</string>
   <string name="xml_tool_select_ecu_type">ECU-Typ auswählen</string>
   <string name="xml_tool_ecu_list">Erkannte ECUs</string>
   <string name="xml_tool_info_sgbd">SGBD</string>
@@ -378,6 +395,9 @@
   <!-- XML Tool Ecu Activity -->
   <string name="xml_tool_ecu_title">Jobs für ECU: {0}</string>
   <string name="xml_tool_ecu_job_comments">Kommentare für Job: {0}</string>
+  <string name="xml_tool_ecu_job_comments_ecu_info">ECU Informationen:</string>
+  <string name="xml_tool_ecu_job_comments_ecu_info_addr">Adresse {0:X02}:</string>
+  <string name="xml_tool_ecu_job_comments_ecu_info_subsys">Subsystem {0}:</string>
   <string name="xml_tool_ecu_result_comments">Kommentare für Ergebnis: {0}</string>
   <string name="xml_tool_ecu_result_type">Datentyp</string>
   <string name="xml_tool_ecu_user_format">Anwender</string>
@@ -411,9 +431,73 @@
   <string name="xml_tool_button_test_format">Lesen</string>
   <string name="xml_tool_ecu_add_functions">Zusätzliche Funtionen</string>
   <string name="xml_tool_button_ediabas_tool">Ediabas Tool</string>
+  <string name="xml_tool_button_coding">Kodieren</string>
+  <string name="xml_tool_button_coding2">Kodieren 2</string>
+  <string name="xml_tool_button_adaption">Adaption</string>
+  <string name="xml_tool_button_login">Login</string>
+  <string name="xml_tool_button_sec_access">Zugriffsberechtigung</string>
   <string name="xml_tool_execute_test_job">Job wird ausgeführt</string>
   <string name="xml_tool_read_test_job_failed">Ausführen des Jobs fehlgeschlagen</string>
+  <string name="xml_tool_ecu_msg_save_lock">Das Schreiben der Konfiguration wurde in der Konfigurationsdatei gesperrt.\nÄnderungen können nicht gespeichert werden.</string>
   <string name="xml_tool_ecu_msg_no_selection">Sie haben keine Daten für die Anzeige ausgewählt.\nWählen Sie hierfür zunächst die gewünschen Jobs und Ergebnisse aus der Liste.\nWollen Sie trotzdem abbrechen?</string>
+  <string name="xml_tool_ecu_msg_no_grid_selection">Sie haben die graphische Anzeige aktiviert, aber keine graphische Darstellung ausgewählt.\nEs wird Nichts angezeigt.\nWollen Sie trotzdem abbrechen?</string>
+  <string name="xml_tool_result_amount_limit">Abhängig vom ECU-Typ ist die Anzahl der Ergebnisse begrenzt.\nWenn sie zu viele Ergebnisse wählen, werden keine Daten übertragen.</string>
+
+  <!-- XML ECU Tool Options Menu -->
+  <string name="menu_xml_ecu_tool_search">Suchen</string>
+
+  <!-- Coding Activity -->
+  <string name="vag_coding_title_coding">ECU Kodieren: {0}</string>
+  <string name="vag_coding_title_login">ECU Login: {0}</string>
+  <string name="vag_coding_title_sec_access">ECU Zugriffsberechtigung: {0}</string>
+  <string name="vag_coding_subsystem_title">Subsystem</string>
+  <string name="vag_coding_short_title">Kodierung (dec): {0}-{1}</string>
+  <string name="vag_coding_login_title">Login (dec): {0}-{1}</string>
+  <string name="vag_coding_sec_access_title">Zugriffsberechtigung (dec): {0}-{1}</string>
+  <string name="vag_coding_comments_title">Hinweise</string>
+  <string name="vag_coding_raw_title">Kodierung (hex)</string>
+  <string name="vag_coding_workshop_number_title">Betriebsnummer (dec): {0}-{1}</string>
+  <string name="vag_coding_importer_number_title">Importeursnummer (dec): {0}-{1}</string>
+  <string name="vag_coding_equipment_number_title">Gerätenummer (dec): {0}-{1}</string>
+  <string name="vag_coding_ecu_reset">ECU Reset durchführen</string>
+  <string name="vag_coding_assistant_title">Kodierungs-Assistent</string>
+  <string name="vag_coding_execute_title">Vorgang ausführen</string>
+  <string name="vag_coding_button_execute">Ausführen</string>
+  <string name="vag_coding_processing">Vorgang wird ausgeführt</string>
+  <string name="vag_coding_write_values_invalid">Wenn die Betriebsnummer, Importeursnummer oder Gerätenummer 0 sind kann es sein, dass die ECU die Werte ablehnt.\nWollen Sie trotzdem fortfahren?</string>
+  <string name="vag_coding_write_coding_illegal_arguments">Die Job Argumente sind außerhalb des gültigen Bereichs</string>
+  <string name="vag_coding_write_coding_failed">Der Vorgang ist fehlgeschlagen</string>
+  <string name="vag_coding_write_coding_access_denied">Zugriff verweigert, Sie müssen sich zuerst authentifizieren</string>
+  <string name="vag_coding_write_coding_reset_failed">Der ECU Reset ist fehlgeschlagen</string>
+  <string name="vag_coding_write_coding_ok">Kodierung schreiben erfolgreich</string>
+  <string name="vag_coding_write_coding2_failed">Kodierung schreiben fehlgeschlagen.\nWenn der Code falsch war, müssen Sie die Zündung für mindesten 10 Minuten eingeschaltet lassen, bevor Sie es erneut versuchen!</string>
+  <string name="vag_coding_login_job_failed">Login fehlgeschlagen.\nWenn der Code falsch war, müssen Sie die Zündung für 1 bis 2 Minuten ausschalten, bevor Sie es erneut versuchen!</string>
+  <string name="vag_coding_login_job_ok">Login erfolgreich</string>
+  <string name="vag_coding_sec_access_job_failed">Zugriffsberechtigung fehlgeschlagen</string>
+  <string name="vag_coding_sec_access_job_ok">Zugriffsberechtigung erfolgreich</string>
+
+  <!-- Adaption Activity -->
+  <string name="vag_adaption_title_adaption">Adaption ECU: {0}</string>
+  <string name="vag_adaption_channel_title">Dokumentierter Kanal</string>
+  <string name="vag_adaption_channel_select">Adaptionskanal wählen</string>
+  <string name="vag_adaption_channel_reset">Adaptionswerte zurücksetzen</string>
+  <string name="vag_adaption_channel_reset_info">Das Speichern von Adaptionskanal 0 setzt alle Lernwerte zurück</string>
+  <string name="vag_adaption_channel_number_title">Kanalnummer</string>
+  <string name="vag_adaption_comments_title">Hinweise</string>
+  <string name="vag_adaption_value_current_title">Aktueller Adaptionswert</string>
+  <string name="vag_adaption_value_new_title">Neuer Adaptionswert</string>
+  <string name="vag_adaption_value_test_title">Getesteter Adaptionswert</string>
+  <string name="vag_adaption_meas_value_title">Wert {0}: {1}</string>
+  <string name="vag_adaption_workshop_number_title">Betriebsnummer (dec): {0}-{1}</string>
+  <string name="vag_adaption_importer_number_title">Importeursnummer (dec): {0}-{1}</string>
+  <string name="vag_adaption_equipment_number_title">Gerätenummer (dec): {0}-{1}</string>
+  <string name="vag_adaption_operation_title">Vorgänge</string>
+  <string name="vag_adaption_service_id">Service ID:</string>
+  <string name="vag_adaption_button_read">Lesen</string>
+  <string name="vag_adaption_button_test">Testen</string>
+  <string name="vag_adaption_button_store">Speichern</string>
+  <string name="vag_adaption_button_stop">Stop</string>
+  <string name="vag_adaption_ecu_reset">ECU Reset durchführen</string>
 
   <!-- CAN Adapter Activity -->
   <string name="can_adapter_title">CAN Adapter</string>

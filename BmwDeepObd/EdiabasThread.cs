@@ -20,14 +20,16 @@ namespace BmwDeepObd
     {
         public class EdiabasErrorReport
         {
-            public EdiabasErrorReport(string ecuName, Dictionary<string, EdiabasNet.ResultData> errorDict, List<Dictionary<string, EdiabasNet.ResultData>> errorDetailSet) :
-                this(ecuName, errorDict, errorDetailSet, string.Empty)
+            public EdiabasErrorReport(string ecuName, string vagDataFileName, string vagUdsFileName, Dictionary<string, EdiabasNet.ResultData> errorDict, List<Dictionary<string, EdiabasNet.ResultData>> errorDetailSet) :
+                this(ecuName, vagDataFileName, vagUdsFileName, errorDict, errorDetailSet, string.Empty)
             {
             }
 
-            public EdiabasErrorReport(string ecuName, Dictionary<string, EdiabasNet.ResultData> errorDict, List<Dictionary<string, EdiabasNet.ResultData>> errorDetailSet, string execptionText)
+            public EdiabasErrorReport(string ecuName, string vagDataFileName, string vagUdsFileName, Dictionary<string, EdiabasNet.ResultData> errorDict, List<Dictionary<string, EdiabasNet.ResultData>> errorDetailSet, string execptionText)
             {
                 EcuName = ecuName;
+                VagDataFileName = vagDataFileName;
+                VagUdsFileName = vagUdsFileName;
                 ErrorDict = errorDict;
                 ErrorDetailSet = errorDetailSet;
                 ExecptionText = execptionText;
@@ -35,11 +37,26 @@ namespace BmwDeepObd
 
             public string EcuName { get; }
 
+            public string VagDataFileName { get; }
+
+            public string VagUdsFileName { get; }
+
             public Dictionary<string, EdiabasNet.ResultData> ErrorDict { get; }
 
             public List<Dictionary<string, EdiabasNet.ResultData>> ErrorDetailSet { get; }
 
             public string ExecptionText { get; }
+        }
+
+        public class EdiabasErrorReportReset : EdiabasErrorReport
+        {
+            public EdiabasErrorReportReset(string ecuName, string vagDataFileName, string vagUdsFileName, Dictionary<string, EdiabasNet.ResultData> errorDict, bool errorResetOk) :
+                base(ecuName, vagDataFileName, vagUdsFileName, errorDict, null, string.Empty)
+            {
+                ErrorResetOk = errorResetOk;
+            }
+
+            public bool ErrorResetOk { get; }
         }
 
         [DataContract]
@@ -153,6 +170,8 @@ namespace BmwDeepObd
         }
 
         public List<string> ErrorResetList { get; set; }
+        public string ErrorResetSgbdFunc { get; set; }
+        public bool ErrorResetActive { get; private set; }
 
         public EdiabasNet Ediabas { get; private set; }
 
@@ -171,6 +190,7 @@ namespace BmwDeepObd
         private bool _ediabasJobAbort;
         private JobReader.PageInfo _lastPageInfo;
         private long _lastUpdateTime;
+        private string _vagPath;
         private string _logDir;
         private bool _appendLog;
         private StreamWriter _swDataLog;
@@ -223,7 +243,7 @@ namespace BmwDeepObd
             }
         }
 
-        public bool StartThread(string comPort, object connectParameter, JobReader.PageInfo pageInfo, bool commActive, string traceDir, bool traceAppend, string logDir, bool appendLog)
+        public bool StartThread(string comPort, object connectParameter, JobReader.PageInfo pageInfo, bool commActive, string vagPath, string traceDir, bool traceAppend, string logDir, bool appendLog)
         {
             if (_workerThread != null)
             {
@@ -261,6 +281,7 @@ namespace BmwDeepObd
                 JobPageInfo = pageInfo;
                 _lastPageInfo = null;
                 _lastUpdateTime = Stopwatch.GetTimestamp();
+                _vagPath = vagPath;
                 _logDir = logDir;
                 _appendLog = appendLog;
                 InitProperties(null);
@@ -366,6 +387,24 @@ namespace BmwDeepObd
             }
         }
 
+        private string FormatResult(JobReader.PageInfo pageInfo, JobReader.DisplayInfo displayInfo, MultiMap<string, EdiabasNet.ResultData> resultDict)
+        {
+            string result = ActivityCommon.FormatResult(pageInfo, displayInfo, resultDict, out Android.Graphics.Color? _, out double? _);
+            if (ActivityCommon.SelectedManufacturer != ActivityCommon.ManufacturerType.Bmw)
+            {
+                if (ActivityCommon.VagUdsActive && !string.IsNullOrEmpty(pageInfo.JobsInfo.VagUdsFileName))
+                {
+                    string udsFileName = Path.Combine(_vagPath, pageInfo.JobsInfo.VagUdsFileName);
+                    string resultUds = ActivityCommon.FormatResultVagUds(udsFileName, pageInfo, displayInfo, resultDict, out double? _);
+                    if (!string.IsNullOrEmpty(resultUds))
+                    {
+                        result = resultUds;
+                    }
+                }
+            }
+            return result;
+        }
+
         private void LogData(JobReader.PageInfo pageInfo, MultiMap<string, EdiabasNet.ResultData> resultDict)
         {
             if (_swDataLog == null)
@@ -378,7 +417,7 @@ namespace BmwDeepObd
             bool logDataPresent = false;
             foreach (JobReader.DisplayInfo displayInfo in pageInfo.DisplayList)
             {
-                string result = ActivityCommon.FormatResult(pageInfo, displayInfo, resultDict, out Android.Graphics.Color? _);
+                string result = FormatResult(pageInfo, displayInfo, resultDict);
                 if (result != null)
                 {
                     if (!string.IsNullOrEmpty(displayInfo.LogTag))
@@ -431,7 +470,7 @@ namespace BmwDeepObd
             };
             foreach (JobReader.DisplayInfo displayInfo in pageInfo.DisplayList)
             {
-                string result = ActivityCommon.FormatResult(pageInfo, displayInfo, resultDict, out Android.Graphics.Color? _);
+                string result = FormatResult(pageInfo, displayInfo, resultDict);
                 if (result != null)
                 {
                     BroadcastItem broadcastItem = new BroadcastItem
@@ -526,13 +565,68 @@ namespace BmwDeepObd
                     _ediabasInitReq = false;
                 }
                 List<string> errorResetList;
+                string errorResetSgbdFunc;
                 lock (DataLock)
                 {
                     errorResetList = ErrorResetList;
                     ErrorResetList = null;
+                    errorResetSgbdFunc = ErrorResetSgbdFunc;
+                    ErrorResetSgbdFunc = null;
+                    ErrorResetActive = errorResetList != null || !string.IsNullOrEmpty(errorResetSgbdFunc);
                 }
 
                 List<EdiabasErrorReport> errorReportList = new List<EdiabasErrorReport>();
+
+                try
+                {
+                    if (ActivityCommon.SelectedManufacturer == ActivityCommon.ManufacturerType.Bmw && !string.IsNullOrEmpty(errorResetSgbdFunc))
+                    {
+                        ActivityCommon.ResolveSgbdFile(Ediabas, errorResetSgbdFunc);
+
+                        Ediabas.ArgString = string.Empty;
+                        Ediabas.ArgBinaryStd = null;
+                        Ediabas.ResultsRequests = string.Empty;
+                        Ediabas.ExecuteJob("FS_LOESCHEN_FUNKTIONAL");
+
+                        List<Dictionary<string, EdiabasNet.ResultData>> resultSets = new List<Dictionary<string, EdiabasNet.ResultData>>(Ediabas.ResultSets);
+                        if (resultSets.Count > 1)
+                        {
+                            Dictionary<string, EdiabasNet.ResultData> resultDictOk = null;
+                            int dictIndex = 0;
+                            foreach (Dictionary<string, EdiabasNet.ResultData> resultDictLocal in resultSets)
+                            {
+                                if (dictIndex == 0)
+                                {
+                                    dictIndex++;
+                                    continue;
+                                }
+                                if (resultDictLocal.TryGetValue("JOB_STATUS", out EdiabasNet.ResultData resultData))
+                                {
+                                    if (resultData.OpData is string)
+                                    {
+                                        // read details
+                                        string jobStatus = (string)resultData.OpData;
+                                        if (String.Compare(jobStatus, "OKAY", StringComparison.OrdinalIgnoreCase) == 0)
+                                        {
+                                            resultDictOk = resultDictLocal;
+                                            break;
+                                        }
+                                    }
+                                }
+                                dictIndex++;
+                            }
+
+                            if (resultDictOk != null)
+                            {
+                                errorReportList.Add(new EdiabasErrorReportReset(string.Empty, null, null, resultDictOk, true));
+                            }
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // ignored
+                }
 
                 int index = -1;
                 foreach (JobReader.EcuInfo ecuInfo in pageInfo.ErrorsInfo.EcuList)
@@ -548,7 +642,7 @@ namespace BmwDeepObd
                     }
                     try
                     {
-                        Ediabas.ResolveSgbdFile(ecuInfo.Sgbd);
+                        ActivityCommon.ResolveSgbdFile(Ediabas, ecuInfo.Sgbd);
                     }
                     catch (Exception ex)
                     {
@@ -557,7 +651,7 @@ namespace BmwDeepObd
                         {
                             exText = EdiabasNet.GetExceptionText(ex);
                         }
-                        errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, null, null, exText));
+                        errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, null, null, exText));
                         continue;
                     }
 
@@ -571,6 +665,40 @@ namespace BmwDeepObd
                                 Ediabas.ArgBinaryStd = null;
                                 Ediabas.ResultsRequests = string.Empty;
                                 Ediabas.ExecuteJob(ActivityCommon.SelectedManufacturer == ActivityCommon.ManufacturerType.Bmw ? "FS_LOESCHEN" : "Fehlerspeicher_loeschen");
+
+                                List<Dictionary<string, EdiabasNet.ResultData>> resultSets = new List<Dictionary<string, EdiabasNet.ResultData>>(Ediabas.ResultSets);
+                                if (resultSets.Count > 1)
+                                {
+                                    bool errorResetOk = false;
+                                    string resultName;
+                                    Dictionary<string, EdiabasNet.ResultData> resultDictCheck;
+                                    if (ActivityCommon.SelectedManufacturer == ActivityCommon.ManufacturerType.Bmw)
+                                    {
+                                        resultName = "JOB_STATUS";
+                                        resultDictCheck = resultSets[1];
+                                    }
+                                    else
+                                    {
+                                        resultName = "JOBSTATUS";
+                                        resultDictCheck = resultSets[0];
+                                    }
+                                    if (resultDictCheck.TryGetValue(resultName, out EdiabasNet.ResultData resultData))
+                                    {
+                                        if (resultData.OpData is string)
+                                        {
+                                            // read details
+                                            string jobStatus = (string)resultData.OpData;
+                                            if (String.Compare(jobStatus, "OKAY", StringComparison.OrdinalIgnoreCase) == 0)
+                                            {
+                                                errorResetOk = true;
+                                            }
+                                        }
+                                    }
+                                    if (errorResetOk)
+                                    {
+                                        errorReportList.Add(new EdiabasErrorReportReset(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, resultDictCheck, errorResetOk));
+                                    }
+                                }
                             }
                         }
                         catch (Exception)
@@ -585,9 +713,14 @@ namespace BmwDeepObd
                         Ediabas.ExecuteJob("_JOBS");    // force to load file
 
                         string errorJob = ActivityCommon.SelectedManufacturer == ActivityCommon.ManufacturerType.Bmw ? "FS_LESEN" : "Fehlerspeicher_abfragen";
+                        string argString = string.Empty;
+                        if (ActivityCommon.SelectedManufacturer != ActivityCommon.ManufacturerType.Bmw && !string.IsNullOrEmpty(ecuInfo.VagUdsFileName))
+                        {
+                            argString = "MW_LESEN";
+                        }
                         if (Ediabas.IsJobExisting(errorJob))
                         {
-                            Ediabas.ArgString = string.Empty;
+                            Ediabas.ArgString = argString;
                             Ediabas.ArgBinaryStd = null;
                             Ediabas.ResultsRequests = string.Empty;
                             Ediabas.ExecuteJob(errorJob);
@@ -617,7 +750,7 @@ namespace BmwDeepObd
                                 {
                                     if (Ediabas.IsJobExisting("FehlerspeicherSAE_abfragen"))
                                     {
-                                        Ediabas.ArgString = string.Empty;
+                                        Ediabas.ArgString = "MW_LESEN";
                                         Ediabas.ArgBinaryStd = null;
                                         Ediabas.ResultsRequests = string.Empty;
                                         Ediabas.ExecuteJob("FehlerspeicherSAE_abfragen");
@@ -688,12 +821,13 @@ namespace BmwDeepObd
                                                 MergeResultDictionarys(ref resultDictTemp, resultDictLocal);
                                                 MergeResultDictionarys(ref resultDictTemp, resultDict0);
                                                 resultDictTemp.Add("SAE", new EdiabasNet.ResultData(EdiabasNet.ResultType.TypeI, "SAE", (Int64) (saeMode ? 1 : 0)));
-                                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, resultDictTemp, null));
+                                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, resultDictTemp, null));
                                             }
                                         }
                                         dictIndex++;
                                         continue;
                                     }
+                                    // BMW only
                                     if (resultDictLocal.TryGetValue("F_ORT_NR", out resultData))
                                     {
                                         if (resultData.OpData is Int64)
@@ -718,11 +852,11 @@ namespace BmwDeepObd
                                             if (details)
                                             {
                                                 List<Dictionary<string, EdiabasNet.ResultData>> resultSetsDetail = new List<Dictionary<string, EdiabasNet.ResultData>>(Ediabas.ResultSets);
-                                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, resultDictLocal, new List<Dictionary<string, EdiabasNet.ResultData>>(resultSetsDetail)));
+                                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, resultDictLocal, new List<Dictionary<string, EdiabasNet.ResultData>>(resultSetsDetail)));
                                             }
                                             else
                                             {
-                                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, resultDictLocal, null));
+                                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, resultDictLocal, null));
                                             }
                                         }
                                     }
@@ -731,7 +865,7 @@ namespace BmwDeepObd
                             }
                             else
                             {
-                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, null, null));
+                                errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, null, null));
                             }
                         }
                     }
@@ -742,7 +876,7 @@ namespace BmwDeepObd
                         {
                             exText = EdiabasNet.GetExceptionText(ex);
                         }
-                        errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, null, null, exText));
+                        errorReportList.Add(new EdiabasErrorReport(ecuInfo.Name, ecuInfo.VagDataFileName, ecuInfo.VagUdsFileName, null, null, exText));
                         continue;
                     }
                     if (EdiabasErrorReportList == null)
@@ -778,7 +912,7 @@ namespace BmwDeepObd
                 {
                     try
                     {
-                        Ediabas.ResolveSgbdFile(pageInfo.JobsInfo?.Sgbd);
+                        ActivityCommon.ResolveSgbdFile(Ediabas, pageInfo.JobsInfo?.Sgbd);
                     }
                     catch (Exception ex)
                     {
@@ -825,7 +959,7 @@ namespace BmwDeepObd
                             if (!string.IsNullOrEmpty(sgbd) &&
                                 string.Compare(currentSgbd, sgbd, StringComparison.OrdinalIgnoreCase) != 0)
                             {
-                                Ediabas.ResolveSgbdFile(sgbd);
+                                ActivityCommon.ResolveSgbdFile(Ediabas, sgbd);
                                 currentSgbd = sgbd;
                             }
 
@@ -1006,6 +1140,8 @@ namespace BmwDeepObd
             EdiabasErrorMessage = string.Empty;
             EdiabasErrorReportList = null;
             ErrorResetList = null;
+            ErrorResetSgbdFunc = null;
+            ErrorResetActive = false;
             ResultPageInfo = null;
             UpdateProgress = 0;
 

@@ -18,15 +18,19 @@ namespace EdiabasLib
         private readonly IPAddress _host;
         private readonly int _port;
         private readonly int _timeoutMilliseconds;
+        private readonly bool? _noDelay;
+        private readonly int? _sendBufferSize;
         private TcpClient _connection;
         private bool _connected;
         private Exception _exception;
 
-        public TcpClientWithTimeout(IPAddress host, int port, int timeoutMilliseconds)
+        public TcpClientWithTimeout(IPAddress host, int port, int timeoutMilliseconds, bool? noDelay = null, int ? sendBufferSize = null)
         {
             _host = host;
             _port = port;
             _timeoutMilliseconds = timeoutMilliseconds;
+            _noDelay = noDelay;
+            _sendBufferSize = sendBufferSize;
         }
 
         public TcpClient Connect()
@@ -70,6 +74,14 @@ namespace EdiabasLib
             try
             {
                 _connection = new TcpClient();
+                if (_noDelay.HasValue)
+                {
+                    _connection.NoDelay = _noDelay.Value;
+                }
+                if (_sendBufferSize.HasValue)
+                {
+                    _connection.SendBufferSize = _sendBufferSize.Value;
+                }
                 IPEndPoint ipTcp = new IPEndPoint(_host, _port);
                 _connection.Connect(ipTcp);
                 // record that it succeeded, for the main thread to return to the caller
@@ -82,7 +94,7 @@ namespace EdiabasLib
             }
         }
 
-        public static void ExecuteNetworkCommand(ExecuteNetworkDelegate command, object connManager)
+        public static void ExecuteNetworkCommand(ExecuteNetworkDelegate command, object connManager, bool checkEthernet = false)
         {
 #if Android
             if (Android.OS.Build.VERSION.SdkInt < Android.OS.BuildVersionCodes.Lollipop)
@@ -101,10 +113,48 @@ namespace EdiabasLib
                     foreach (Android.Net.Network network in networks)
                     {
                         Android.Net.NetworkInfo networkInfo = connectivityManager.GetNetworkInfo(network);
-                        if (networkInfo != null && networkInfo.IsConnected && networkInfo.Type == Android.Net.ConnectivityType.Wifi)
+                        Android.Net.NetworkCapabilities networkCapabilities = connectivityManager.GetNetworkCapabilities(network);
+                        // HasTransport support started also with Lollipop
+                        if (networkInfo != null && networkInfo.IsConnected && networkCapabilities != null)
                         {
-                            bindNetwork = network;
-                            break;
+                            bool linkValid = false;
+                            bool autoIp = false;
+                            Android.Net.LinkProperties linkProperties = connectivityManager.GetLinkProperties(network);
+                            foreach (Android.Net.LinkAddress linkAddress in linkProperties.LinkAddresses)
+                            {
+                                if (linkAddress.Address is Java.Net.Inet4Address inet4Address)
+                                {
+                                    if (inet4Address.IsSiteLocalAddress || inet4Address.IsLinkLocalAddress)
+                                    {
+                                        linkValid = true;
+                                        autoIp = inet4Address.IsLinkLocalAddress;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (linkValid)
+                            {
+                                if (networkCapabilities.HasTransport(Android.Net.TransportType.Wifi))
+                                {
+                                    bindNetwork = network;
+                                }
+                                if (checkEthernet && networkCapabilities.HasTransport(Android.Net.TransportType.Ethernet))
+                                {
+                                    if (autoIp)
+                                    {
+                                        // prefer Ethernet auto ip
+                                        bindNetwork = network;
+                                        break;
+                                    }
+
+                                    if (bindNetwork == null)
+                                    {
+                                        // prefer Wifi
+                                        bindNetwork = network;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -140,5 +190,35 @@ namespace EdiabasLib
 #endif
         }
 
+#if Android
+        public static string ConvertIpAddress(int ipAddress)
+        {
+            if (Java.Nio.ByteOrder.NativeOrder().Equals(Java.Nio.ByteOrder.LittleEndian))
+            {
+                ipAddress = Java.Lang.Integer.ReverseBytes(ipAddress);
+            }
+            byte[] ipByteArray = Java.Math.BigInteger.ValueOf(ipAddress).ToByteArray();
+            try
+            {
+                Java.Net.InetAddress inetAddress = Java.Net.InetAddress.GetByAddress(ipByteArray);
+                string address = inetAddress.HostAddress;
+                if (address == null)
+                {
+                    string text = inetAddress.ToString();
+                    System.Text.RegularExpressions.Match match =
+                        System.Text.RegularExpressions.Regex.Match(text, @"\d+\.\d+\.\d+\.\d+$", System.Text.RegularExpressions.RegexOptions.Singleline);
+                    if (match.Success)
+                    {
+                        address = match.Value;
+                    }
+                }
+                return address;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+#endif
     }
 }

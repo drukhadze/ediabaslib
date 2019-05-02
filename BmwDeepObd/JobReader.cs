@@ -86,23 +86,31 @@ namespace BmwDeepObd
 
         public class JobsInfo
         {
-            public JobsInfo(string sgbd, List<JobInfo> jobList)
+            public JobsInfo(string sgbd, string vagDataFileName, string vagUdsFileName, List<JobInfo> jobList)
             {
                 Sgbd = sgbd;
+                VagDataFileName = vagDataFileName;
+                VagUdsFileName = vagUdsFileName;
                 JobList = jobList;
             }
 
             public string Sgbd { get; }
+
+            public string VagDataFileName { get; }
+
+            public string VagUdsFileName { get; }
 
             public List<JobInfo> JobList { get; }
         }
 
         public class EcuInfo
         {
-            public EcuInfo(string name, string sgbd, string results)
+            public EcuInfo(string name, string sgbd, string vagDataFileName, string vagUdsFileName, string results)
             {
                 Name = name;
                 Sgbd = sgbd;
+                VagDataFileName = vagDataFileName;
+                VagUdsFileName = vagUdsFileName;
                 Results = results;
             }
 
@@ -110,15 +118,22 @@ namespace BmwDeepObd
 
             public string Sgbd { get; }
 
+            public string VagDataFileName { get; }
+
+            public string VagUdsFileName { get; }
+
             public string Results { get; }
         }
 
         public class ErrorsInfo
         {
-            public ErrorsInfo(List<EcuInfo> ecuList)
+            public ErrorsInfo(string sgbdFunctional, List<EcuInfo> ecuList)
             {
+                SgbdFunctional = sgbdFunctional;
                 EcuList = ecuList;
             }
+
+            public string SgbdFunctional { get; }
 
             public List<EcuInfo> EcuList { get; }
         }
@@ -190,6 +205,7 @@ namespace BmwDeepObd
         private string _ecuPath = string.Empty;
         private string _logPath = string.Empty;
         private bool _appendLog;
+        private bool _logTagsPresent;
         private string _interfaceName = string.Empty;
         private string _manufacturerName = string.Empty;
         private ActivityCommon.ManufacturerType _manufacturerType = ActivityCommon.ManufacturerType.Bmw;
@@ -202,6 +218,8 @@ namespace BmwDeepObd
         public string LogPath => _logPath;
 
         public bool AppendLog => _appendLog;
+
+        public bool LogTagsPresent => _logTagsPresent;
 
         public string ManufacturerName => _manufacturerName;
 
@@ -239,6 +257,7 @@ namespace BmwDeepObd
             string xmlDir = Path.GetDirectoryName(xmlName);
             _ecuPath = string.Empty;
             _logPath = string.Empty;
+            _logTagsPresent = false;
             _manufacturerName = string.Empty;
             _interfaceName = string.Empty;
 
@@ -488,11 +507,17 @@ namespace BmwDeepObd
                             if (string.Compare(xnodePageChild.Name, "jobs", StringComparison.OrdinalIgnoreCase) == 0)
                             {
                                 string sgbd = null;
+                                string vagDataFileName = null;
+                                string vagUdsFileName = null;
                                 List<JobInfo> jobList = new List<JobInfo>();
                                 if (xnodePageChild.Attributes != null)
                                 {
                                     attrib = xnodePageChild.Attributes["sgbd"];
                                     if (attrib != null) sgbd = attrib.Value;
+                                    attrib = xnodePageChild.Attributes["vag_data_file"];
+                                    if (attrib != null) vagDataFileName = attrib.Value;
+                                    attrib = xnodePageChild.Attributes["vag_uds_file"];
+                                    if (attrib != null) vagUdsFileName = attrib.Value;
                                 }
                                 foreach (XmlNode xnodeJobsChild in xnodePageChild.ChildNodes)
                                 {
@@ -526,10 +551,14 @@ namespace BmwDeepObd
                                         }
                                     }
                                 }
-                                jobsInfo = new JobsInfo(sgbd, jobList);
+                                jobsInfo = new JobsInfo(sgbd, vagDataFileName, vagUdsFileName, jobList);
                             }
                             if (string.Compare(xnodePageChild.Name, "read_errors", StringComparison.OrdinalIgnoreCase) == 0)
                             {
+                                string sgbdFunctional = string.Empty;
+                                attrib = xnodePageChild.Attributes["sgbd_functional"];
+                                if (attrib != null) sgbdFunctional = attrib.Value;
+
                                 List<EcuInfo> ecuList = new List<EcuInfo>();
                                 foreach (XmlNode xnodeErrorsChild in xnodePageChild.ChildNodes)
                                 {
@@ -537,6 +566,8 @@ namespace BmwDeepObd
                                     {
                                         string ecuName = string.Empty;
                                         string sgbd = string.Empty;
+                                        string vagDataFileName = null;
+                                        string vagUdsFileName = null;
                                         string results = "F_UW_KM";
                                         if (xnodeErrorsChild.Attributes != null)
                                         {
@@ -544,18 +575,28 @@ namespace BmwDeepObd
                                             if (attrib != null) ecuName = attrib.Value;
                                             attrib = xnodeErrorsChild.Attributes["sgbd"];
                                             if (attrib != null) sgbd = attrib.Value;
+                                            attrib = xnodeErrorsChild.Attributes["vag_data_file"];
+                                            if (attrib != null) vagDataFileName = attrib.Value;
+                                            attrib = xnodeErrorsChild.Attributes["vag_uds_file"];
+                                            if (attrib != null) vagUdsFileName = attrib.Value;
                                             attrib = xnodeErrorsChild.Attributes["results"];
                                             if (attrib != null) results = attrib.Value;
                                         }
-                                        ecuList.Add(new EcuInfo(ecuName, sgbd, results));
+                                        ecuList.Add(new EcuInfo(ecuName, sgbd, vagDataFileName, vagUdsFileName, results));
                                     }
                                 }
-                                errorsInfo = new ErrorsInfo(ecuList);
+                                errorsInfo = new ErrorsInfo(sgbdFunctional, ecuList);
                             }
                             if (string.Compare(xnodePageChild.Name, "code", StringComparison.OrdinalIgnoreCase) == 0)
                             {
                                 classCode = xnodePageChild.InnerText;
-                                attrib = xnodePageChild.Attributes["show_warnigs"];
+                                attrib = xnodePageChild.Attributes["show_warnings"];
+                                // ReSharper disable once ConvertIfStatementToNullCoalescingExpression
+                                if (attrib == null)
+                                {
+                                    // for backward compatibility
+                                    attrib = xnodePageChild.Attributes["show_warnigs"];
+                                }
                                 if (attrib != null)
                                 {
                                     try
@@ -570,6 +611,7 @@ namespace BmwDeepObd
                             }
                         }
                         if (!logEnabled) logFile = string.Empty;
+                        if (logEnabled) _logTagsPresent = true;
                         if (string.IsNullOrEmpty(pageName)) continue;
                         if (string.IsNullOrWhiteSpace(classCode)) classCode = null;
 

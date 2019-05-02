@@ -13,9 +13,8 @@ namespace UdsFileReader
 {
     public class UdsReader
     {
-        private static readonly Encoding Encoding = Encoding.GetEncoding(1252);
         public const string FileExtension = ".uds";
-        public const string UdsDir = "UDS_EV";
+        public const string UdsDir = "uds_ev";
 
         public enum SegmentType
         {
@@ -24,6 +23,7 @@ namespace UdsFileReader
             Ffmux,
             Ges,
             Mwb,
+            Slv,
             Sot,
             Xpl,
         }
@@ -47,37 +47,95 @@ namespace UdsFileReader
         public const int DataTypeMaskSigned = 0x80;
         public const int DataTypeMaskEnum = 0x3F;
 
+        private readonly Dictionary<string, List<ParseInfoAdp>> _adpParseInfoDict = new Dictionary<string, List<ParseInfoAdp>>();
+        private readonly Dictionary<string, Dictionary<string, ParseInfoMwb>> _mwbParseInfoDict = new Dictionary<string, Dictionary<string, ParseInfoMwb>>();
+        private readonly Dictionary<string, List<ParseInfoBase>> _dtcMwbParseInfoDict = new Dictionary<string, List<ParseInfoBase>>();
+        private readonly Dictionary<string, Dictionary<uint, ParseInfoDtc>> _dtcParseInfoDict = new Dictionary<string, Dictionary<uint, ParseInfoDtc>>();
+        private readonly Dictionary<string, List<ParseInfoSlv>> _slvParseInfoDict = new Dictionary<string, List<ParseInfoSlv>>();
+
         public class FileNameResolver
         {
-            public FileNameResolver(UdsReader udsReader, string asamData, string asamRev, string partNumber, string didHarwareNumber)
+            public FileNameResolver(UdsReader udsReader, string vin, string asamData, string asamRev, string partNumber, string didHarwareNumber)
             {
                 UdsReader = udsReader;
+                Vin = vin;
                 AsamData = asamData;
                 AsamRev = asamRev;
                 PartNumber = partNumber;
                 DidHarwareNumber = didHarwareNumber;
+                Manufacturer = string.Empty;
+                AssemblyPlant = ' ';
+                SerialNumber = -1;
+                if (!string.IsNullOrEmpty(Vin) && Vin.Length >= 17)
+                {
+                    Manufacturer = Vin.Substring(0, 3);
+                    AssemblyPlant = Vin[10];
+                    string serial = Vin.Substring(11, 6);
+                    if (Int64.TryParse(serial, NumberStyles.Integer, CultureInfo.InvariantCulture, out Int64 serValue))
+                    {
+                        SerialNumber = serValue;
+                    }
+                }
+                ModelYear = DataReader.GetModelYear(Vin);
             }
 
-            public string GetChassisType(string hardwareCode)
+            public string GetChassisType(string modelCode)
             {
-                if (string.IsNullOrEmpty(hardwareCode) || hardwareCode.Length < 2)
+                if (string.IsNullOrEmpty(modelCode) || modelCode.Length < 2)
                 {
                     return string.Empty;
                 }
-                string key = hardwareCode.Substring(0, 2).ToUpperInvariant();
-                if (UdsReader._chassisMap.TryGetValue(key, out string chassisType))
+                string key = modelCode.Substring(0, 2).ToUpperInvariant();
+                if (UdsReader._chassisMap.TryGetValue(key, out ChassisInfo chassisInfo))
                 {
-                    return chassisType;
+                    if (chassisInfo.ConverterFunc != null)
+                    {
+                        return chassisInfo.ConverterFunc(UdsReader, this);
+                    }
+                    return chassisInfo.ChassisName;
                 }
 
                 return string.Empty;
+            }
+
+            public string GetFileName(string rootDir)
+            {
+                string udsDir = Path.Combine(rootDir, UdsDir);
+                List<string> fileList = GetFileList(udsDir);
+                if (fileList == null || fileList.Count < 1)
+                {
+                    return null;
+                }
+
+                return fileList[0];
+            }
+
+            public static List<string> GetAllFiles(string fileName)
+            {
+                List<string> includeFiles = new List<string> { fileName };
+                if (!GetIncludeFiles(fileName, includeFiles))
+                {
+                    return null;
+                }
+
+                return includeFiles;
             }
 
             public List<string> GetFileList(string dir)
             {
                 try
                 {
-                    string chassisType = GetChassisType(PartNumber);
+                    string chassisType = null;
+                    if (ModelYear >= 0 && !string.IsNullOrEmpty(Vin) && Vin.Length >= 10)
+                    {
+                        chassisType = GetChassisType(Vin.Substring(6, 2));
+                    }
+
+                    if (string.IsNullOrEmpty(chassisType))
+                    {
+                        chassisType = GetChassisType(PartNumber);
+                    }
+
                     if (string.IsNullOrEmpty(chassisType))
                     {
                         chassisType = GetChassisType(DidHarwareNumber);
@@ -188,10 +246,15 @@ namespace UdsFileReader
             }
 
             public UdsReader UdsReader { get; }
+            public string Vin { get; }
             public string AsamData { get; }
             public string AsamRev { get; }
             public string PartNumber { get; }
             public string DidHarwareNumber { get; }
+            public string Manufacturer { get; }
+            public char AssemblyPlant { get; }
+            public long SerialNumber { get; }
+            public int ModelYear { get; }
         }
 
         public class ValueName
@@ -414,10 +477,19 @@ namespace UdsFileReader
 
                 if (lineArray.Length >= offset + 10)
                 {
-                    if (!UInt32.TryParse(lineArray[offset + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 dataTypeId))
+                    UInt32 dataTypeId;
+                    if (lineArray[offset + 1].Length > 0)
                     {
-                        throw new Exception("No data type id");
+                        if (!UInt32.TryParse(lineArray[offset + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out dataTypeId))
+                        {
+                            throw new Exception("No data type id");
+                        }
                     }
+                    else
+                    {
+                        dataTypeId = (UInt32)DataType.HexBytes;
+                    }
+
                     DataTypeId = dataTypeId;
                     DataType dataType = (DataType)(dataTypeId & DataTypeMaskEnum);
 
@@ -453,13 +525,36 @@ namespace UdsFileReader
                         BitLength = bitLength;
                     }
 
+                    if (BitLength.HasValue)
+                    {
+                        MinTelLength = (ByteOffset ?? 0) + ((BitLength ?? 0) + (BitOffset ?? 0) + 7) / 8;
+                    }
+
                     if (UInt32.TryParse(lineArray[offset + 9], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 nameDetailKey))
                     {
-                        if (!udsReader._textMap.TryGetValue(nameDetailKey, out string[] nameDetailArray))
+                        if (udsReader._textMap.TryGetValue(nameDetailKey, out string[] nameDetailArray))
                         {
-                            throw new Exception("No name detail found");
+                            NameDetailKey = nameDetailKey;
+                            NameDetailArray = nameDetailArray;
+                            if (nameDetailArray != null)
+                            {
+                                if (nameDetailArray.Length >= 1)
+                                {
+                                    NameDetail = nameDetailArray[0];
+                                }
+                                if (nameDetailArray.Length >= 3)
+                                {
+                                    if (UInt32.TryParse(nameDetailArray[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 valueType))
+                                    {
+                                        DataDetailIdType = valueType;
+                                    }
+                                    if (UInt32.TryParse(nameDetailArray[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 valueId))
+                                    {
+                                        DataDetailId = valueId;
+                                    }
+                                }
+                            }
                         }
-                        NameDetailArray = nameDetailArray;
                     }
 
                     if (UInt32.TryParse(lineArray[offset + 5], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 unitKey) && unitKey > 0)
@@ -576,7 +671,11 @@ namespace UdsFileReader
             public UdsReader UdsReader { get; }
             public string[] LineArray { get; }
             public UInt32 DataTypeId { get; }
+            public UInt32? NameDetailKey { get; }
             public string[] NameDetailArray { get; }
+            public string NameDetail { get; }
+            public UInt32? DataDetailId { get; }
+            public UInt32? DataDetailIdType { get; }
             public Int64? NumberOfDigits { get; }
             public UInt32? FixedEncodingId { get; }
             public double? ScaleOffset { get; }
@@ -586,6 +685,7 @@ namespace UdsFileReader
             public UInt32? ByteOffset { get; }
             public UInt32? BitOffset { get; }
             public UInt32? BitLength { get; }
+            public UInt32? MinTelLength { get; }
             public List<ValueName> NameValueList { get; }
             public List<MuxEntry> MuxEntryList { get; }
             public FixedEncodingEntry FixedEncoding { get; }
@@ -612,16 +712,100 @@ namespace UdsFileReader
                 return dataTypeName;
             }
 
+            public bool HasDataValue()
+            {
+                DataType dataType = (DataType)(DataTypeId & DataTypeMaskEnum);
+                switch (dataType)
+                {
+                    case DataType.FloatScaled:
+                    case DataType.HexScaled:
+                    case DataType.Integer1:
+                    case DataType.Integer2:
+                        return true;
+                }
+                return false;
+            }
+
             public string ToString(byte[] data)
             {
+                return ToString(null, data, out double? _);
+            }
+
+            public string ToString(CultureInfo cultureInfo, byte[] data, out double? stringDataValue)
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.Append(ToString(cultureInfo, data, out string unitText, out stringDataValue));
+                if (!string.IsNullOrEmpty(unitText))
+                {
+                    if (sb.Length > 0)
+                    {
+                        sb.Append(" ");
+                    }
+                    sb.Append(unitText);
+                }
+
+                return sb.ToString();
+            }
+
+            public string ToString(CultureInfo cultureInfo, byte[] data, out string unitText, out double? stringDataValue)
+            {
+                stringDataValue = null;
+                string result = ToString(cultureInfo, data, null, out unitText, out object dataValue, out UInt32? _, out byte[] _);
+
+                DataType dataType = (DataType)(DataTypeId & DataTypeMaskEnum);
+                if (dataType != DataType.ValueName)
+                {
+                    if (dataValue is double dataValueDouble)
+                    {
+                        stringDataValue = dataValueDouble;
+                    }
+                    else if (dataValue is UInt64 dataValueUint)
+                    {
+                        stringDataValue = dataValueUint;
+                    }
+                    else if (dataValue is Int64 dataValueInt)
+                    {
+                        stringDataValue = dataValueInt;
+                    }
+                }
+
+                return result;
+            }
+
+            public string ToString(CultureInfo cultureInfo, byte[] data, object newValueObject, out string unitText, out object stringDataValue, out UInt32? usedBitLength, out byte[] dataNew, bool hideInvalid = false)
+            {
+                string result = DataToString(cultureInfo, data, newValueObject, out unitText, out stringDataValue, out usedBitLength, out dataNew, hideInvalid);
+                if (dataNew != null)
+                {
+                    result = DataToString(cultureInfo, dataNew, null, out unitText, out stringDataValue, out usedBitLength, out byte[] _, hideInvalid);
+                }
+                return result;
+            }
+
+            private string DataToString(CultureInfo cultureInfo, byte[] data, object newValueObject, out string unitText, out object stringDataValue, out UInt32? usedBitLength, out byte[] dataNew, bool hideInvalid)
+            {
+                unitText = null;
+                stringDataValue = null;
+                usedBitLength = null;
+                dataNew = null;
                 if (data.Length == 0)
                 {
                     return string.Empty;
                 }
+
+                string newValueString = newValueObject as string;
+                UInt64? newValue = null;
+                double? newScaledValue = null;
+                byte[] newDataBytes = null;
                 UInt32 bitOffset = BitOffset ?? 0;
                 UInt32 byteOffset = ByteOffset ?? 0;
-                int bitLength = data.Length * 8;
-                int byteLength = data.Length;
+                if (byteOffset > data.Length)
+                {
+                    return string.Empty;
+                }
+                int maxLength = data.Length - (int)byteOffset;
+                int bitLength = maxLength * 8;
+                int byteLength = maxLength;
                 if (BitLength.HasValue)
                 {
                     bitLength = (int)BitLength.Value;
@@ -631,6 +815,7 @@ namespace UdsFileReader
                 {
                     return string.Empty;
                 }
+
                 byte[] subData = new byte[byteLength];
                 Array.Copy(data, byteOffset, subData, 0, byteLength);
                 if (bitOffset > 0 || (bitLength & 0x7) != 0)
@@ -640,7 +825,7 @@ namespace UdsFileReader
                     {
                         return string.Empty;
                     }
-                    // shift bits to left
+                    // shift bits to the left
                     for (int i = 0; i < bitArray.Length - bitOffset; i++)
                     {
                         bitArray[i] = bitArray[(int)(i + bitOffset)];
@@ -653,201 +838,481 @@ namespace UdsFileReader
                     bitArray.CopyTo(subData, 0);
                 }
 
-                StringBuilder sb = new StringBuilder();
-                DataType dataType = (DataType) (DataTypeId & DataTypeMaskEnum);
-                switch (dataType)
+                usedBitLength = (UInt32)bitLength;
+
+                CultureInfo oldCulture = null;
+                try
                 {
-                    case DataType.FloatScaled:
-                    case DataType.HexScaled:
-                    case DataType.Integer1:
-                    case DataType.Integer2:
-                    case DataType.ValueName:
-                    case DataType.MuxTable:
+                    if (cultureInfo != null)
                     {
-                        UInt64 value = 0;
-                        if ((DataTypeId & DataTypeMaskSwapped) != 0)
+                        oldCulture = CultureInfo.CurrentCulture;
+                        CultureInfo.CurrentCulture = cultureInfo;
+                    }
+                    StringBuilder sb = new StringBuilder();
+                    DataType dataType = (DataType) (DataTypeId & DataTypeMaskEnum);
+                    switch (dataType)
+                    {
+                        case DataType.FloatScaled:
+                        case DataType.HexScaled:
+                        case DataType.Integer1:
+                        case DataType.Integer2:
+                        case DataType.ValueName:
+                        case DataType.MuxTable:
                         {
-                            for (int i = 0; i < byteLength; i++)
+                            if (usedBitLength.Value > sizeof(UInt64) * 8)
                             {
-                                value <<= 8;
-                                value |= subData[byteLength - i - 1];
-                            }
-                        }
-                        else
-                        {
-                            for (int i = 0; i < byteLength; i++)
-                            {
-                                value <<= 8;
-                                value |= subData[i];
-                            }
-                        }
-
-                        if (dataType == DataType.ValueName)
-                        {
-                            if (NameValueList == null)
-                            {
-                                return string.Empty;
+                                usedBitLength = sizeof(UInt64) * 8;
                             }
 
-                            foreach (ValueName valueName in NameValueList)
+                            UInt64 value = 0;
+                            if ((DataTypeId & DataTypeMaskSwapped) != 0)
                             {
-                                // ReSharper disable once ReplaceWithSingleAssignment.True
-                                bool match = true;
-                                if (valueName.MinValue.HasValue && (Int64)value < valueName.MinValue.Value)
+                                for (int i = 0; i < byteLength; i++)
                                 {
-                                    match = false;
+                                    value <<= 8;
+                                    value |= subData[byteLength - i - 1];
                                 }
-                                if (valueName.MaxValue.HasValue && (Int64)value > valueName.MaxValue.Value)
+                            }
+                            else
+                            {
+                                for (int i = 0; i < byteLength; i++)
                                 {
-                                    match = false;
+                                    value <<= 8;
+                                    value |= subData[i];
                                 }
-                                if (match)
+                            }
+
+                            if (dataType == DataType.ValueName)
+                            {
+                                if (NameValueList == null)
                                 {
-                                    if (valueName.NameArray != null && valueName.NameArray.Length > 0)
-                                    {
-                                        return valueName.NameArray[0];
-                                    }
                                     return string.Empty;
                                 }
-                            }
-                            return $"{GetTextMapText(UdsReader, 3455) ?? string.Empty}: {value}"; // Unbekannt
-                        }
 
-                        if (dataType == DataType.MuxTable)
-                        {
-                            if (MuxEntryList == null)
-                            {
-                                return string.Empty;
-                            }
-
-                            MuxEntry muxEntryDefault = null;
-                            foreach (MuxEntry muxEntry in MuxEntryList)
-                            {
-                                if (muxEntry.Default)
+                                if (newValueObject is UInt64 newValueUlong)
                                 {
-                                    muxEntryDefault = muxEntry;
-                                    continue;
+                                    newValue = newValueUlong;
                                 }
-                                // ReSharper disable once ReplaceWithSingleAssignment.True
-                                bool match = true;
-                                if (muxEntry.MinValue.HasValue && (Int64)value < muxEntry.MinValue.Value)
+
+                                foreach (ValueName valueName in NameValueList)
                                 {
-                                    match = false;
+                                    // ReSharper disable once ReplaceWithSingleAssignment.True
+                                    bool match = true;
+                                    if (valueName.MinValue.HasValue && (Int64)value < valueName.MinValue.Value)
+                                    {
+                                        match = false;
+                                    }
+                                    if (valueName.MaxValue.HasValue && (Int64)value > valueName.MaxValue.Value)
+                                    {
+                                        match = false;
+                                    }
+                                    if (match)
+                                    {
+                                        if (valueName.NameArray != null && valueName.NameArray.Length > 0)
+                                        {
+                                            stringDataValue = value;
+                                            return valueName.NameArray[0];
+                                        }
+                                        return string.Empty;
+                                    }
                                 }
-                                if (muxEntry.MaxValue.HasValue && (Int64)value > muxEntry.MaxValue.Value)
+
+                                if (hideInvalid)
                                 {
-                                    match = false;
+                                    return string.Empty;
                                 }
-                                if (match)
-                                {
-                                    return muxEntry.DataTypeEntry.ToString(subData);
-                                }
+                                return $"{GetTextMapText(UdsReader, 3455) ?? string.Empty}: {value}"; // Unbekannt
                             }
 
-                            if (muxEntryDefault != null)
+                            if (dataType == DataType.MuxTable)
                             {
-                                return muxEntryDefault.DataTypeEntry.ToString(subData);
-                            }
-                            return $"{GetTextMapText(UdsReader, 3455) ?? string.Empty}: {value}"; // Unbekannt
-                        }
+                                if (MuxEntryList == null)
+                                {
+                                    return string.Empty;
+                                }
 
-                        double scaledValue;
-                        if ((DataTypeId & DataTypeMaskSigned) != 0)
-                        {
-                            UInt64 valueConv = value;
-                            UInt64 signMask = (UInt64)1 << (bitLength - 1);
-                            if ((signMask & value) != 0)
-                            {
-                                valueConv = (value ^ signMask) - signMask;  // sign extend
-                            }
-                            Int64 valueSigned = (Int64)valueConv;
+                                MuxEntry muxEntryDefault = null;
+                                foreach (MuxEntry muxEntry in MuxEntryList)
+                                {
+                                    if (muxEntry.Default)
+                                    {
+                                        muxEntryDefault = muxEntry;
+                                        continue;
+                                    }
+                                    // ReSharper disable once ReplaceWithSingleAssignment.True
+                                    bool match = true;
+                                    if (muxEntry.MinValue.HasValue && (Int64)value < muxEntry.MinValue.Value)
+                                    {
+                                        match = false;
+                                    }
+                                    if (muxEntry.MaxValue.HasValue && (Int64)value > muxEntry.MaxValue.Value)
+                                    {
+                                        match = false;
+                                    }
+                                    if (match)
+                                    {
+                                        return muxEntry.DataTypeEntry.ToString(subData);
+                                    }
+                                }
 
-                            if (dataType == DataType.Integer1 || dataType == DataType.Integer2)
+                                if (muxEntryDefault != null)
+                                {
+                                    return muxEntryDefault.DataTypeEntry.ToString(subData);
+                                }
+                                return $"{GetTextMapText(UdsReader, 3455) ?? string.Empty}: {value}"; // Unbekannt
+                            }
+
+                            double scaledValue;
+                            if ((DataTypeId & DataTypeMaskSigned) != 0)
                             {
-                                sb.Append($"{valueSigned}");
+                                UInt64 valueConv = value;
+                                UInt64 signMask = (UInt64)1 << (bitLength - 1);
+                                if ((signMask & value) != 0)
+                                {
+                                    valueConv = (value ^ signMask) - signMask;  // sign extend
+                                }
+                                Int64 valueSigned = (Int64)valueConv;
+
+                                if (dataType == DataType.Integer1 || dataType == DataType.Integer2)
+                                {
+                                    if (newValueString != null)
+                                    {
+                                        try
+                                        {
+                                            newValue = (UInt64) Convert.ToInt64(newValueString);
+                                        }
+                                        catch (Exception)
+                                        {
+                                            // ignored
+                                        }
+                                    }
+                                    sb.Append($"{valueSigned}");
+                                    stringDataValue = valueSigned;
+                                    break;
+                                }
+                                scaledValue = valueSigned;
+                            }
+                            else
+                            {
+                                if (dataType == DataType.Integer1 || dataType == DataType.Integer2)
+                                {
+                                    if (newValueString != null)
+                                    {
+                                        try
+                                        {
+                                            newValue = Convert.ToUInt64(newValueString);
+                                        }
+                                        catch (Exception)
+                                        {
+                                            // ignored
+                                        }
+                                    }
+                                    sb.Append($"{value}");
+                                    stringDataValue = value;
+                                    break;
+                                }
+                                scaledValue = value;
+                            }
+
+                            try
+                            {
+                                if (ScaleMult.HasValue)
+                                {
+                                    scaledValue *= ScaleMult.Value;
+                                }
+                                if (ScaleOffset.HasValue)
+                                {
+                                    scaledValue += ScaleOffset.Value;
+                                }
+                                if (ScaleDiv.HasValue)
+                                {
+                                    scaledValue /= ScaleDiv.Value;
+                                }
+                            }
+                            catch (Exception)
+                            {
+                                // ignored
+                            }
+
+                            if (dataType == DataType.HexScaled)
+                            {
+                                if (newValueString != null)
+                                {
+                                    try
+                                    {
+                                        newScaledValue = Convert.ToUInt64(newValueString, 16);
+                                    }
+                                    catch (Exception)
+                                    {
+                                        // ignored
+                                    }
+                                }
+                                sb.Append($"{(UInt64)scaledValue:X}");
+                                stringDataValue = scaledValue;
                                 break;
                             }
-                            scaledValue = valueSigned;
-                        }
-                        else
-                        {
-                            if (dataType == DataType.Integer1 || dataType == DataType.Integer2)
+
+                            if (newValueString != null)
                             {
-                                sb.Append($"{value}");
-                                break;
+                                try
+                                {
+                                    newScaledValue = Convert.ToDouble(newValueString);
+                                }
+                                catch (Exception)
+                                {
+                                    // ignored
+                                }
                             }
-                            scaledValue = value;
+
+                            sb.Append(scaledValue.ToString($"F{NumberOfDigits ?? 0}"));
+                            stringDataValue = scaledValue;
+                            break;
                         }
 
+                        case DataType.Binary1:
+                        case DataType.Binary2:
+                        {
+                            if (newValueString != null)
+                            {
+                                try
+                                {
+                                    string[] newValueArray = newValueString.Trim().Split(' ', ';', ',');
+                                    List<byte> binList = new List<byte>();
+                                    foreach (string arg in newValueArray)
+                                    {
+                                        if (!string.IsNullOrEmpty(arg))
+                                        {
+                                            binList.Add(Convert.ToByte(arg, 2));
+                                        }
+                                    }
+
+                                    if (binList.Count == subData.Length)
+                                    {
+                                        newDataBytes = binList.ToArray();
+                                    }
+                                }
+                                catch (Exception)
+                                {
+                                    // ignored
+                                }
+                            }
+
+                            foreach (byte value in subData)
+                            {
+                                if (sb.Length > 0)
+                                {
+                                    sb.Append(" ");
+                                }
+                                sb.Append(Convert.ToString(value, 2).PadLeft(8, '0'));
+                            }
+                            break;
+                        }
+
+                        case DataType.HexBytes:
+                            if (newValueString != null)
+                            {
+                                string[] newValueArray = newValueString.Trim().Split(' ', ';', ',');
+                                try
+                                {
+                                    List<byte> binList = new List<byte>();
+                                    foreach (string arg in newValueArray)
+                                    {
+                                        if (!string.IsNullOrEmpty(arg))
+                                        {
+                                            binList.Add(Convert.ToByte(arg, 16));
+                                        }
+                                    }
+
+                                    if (binList.Count == subData.Length)
+                                    {
+                                        newDataBytes = binList.ToArray();
+                                    }
+                                }
+                                catch (Exception)
+                                {
+                                    // ignored
+                                }
+                            }
+
+                            sb.Append(BitConverter.ToString(subData).Replace("-", " "));
+                            break;
+
+                        case DataType.FixedEncoding:
+                            return FixedEncoding.ToString(UdsReader, subData);
+
+                        case DataType.String:
+                            if (newValueString != null)
+                            {
+                                try
+                                {
+                                    newDataBytes = new byte[subData.Length];
+                                    int dataLength = newValueString.Length > newDataBytes.Length ? newDataBytes.Length : newValueString.Length;
+                                    DataReader.EncodingLatin1.GetBytes(newValueString, 0, dataLength, newDataBytes, 0);
+                                }
+                                catch (Exception)
+                                {
+                                    // ignored
+                                }
+                            }
+
+                            sb.Append(DataReader.EncodingLatin1.GetString(subData).TrimEnd('\0', ' '));
+                            break;
+
+                        default:
+                            return string.Empty;
+                    }
+
+                    unitText = UnitText;
+                    return sb.ToString();
+                }
+                finally
+                {
+                    UInt64 maxValueUnsigned = UInt64.MaxValue;
+                    Int64 maxValueSigned = Int64.MaxValue;
+                    Int64 minValueSigned = Int64.MinValue;
+
+                    if (newScaledValue.HasValue || newValue.HasValue)
+                    {
+                        maxValueUnsigned = 0;
+                        for (int i = 0; i < bitLength; i++)
+                        {
+                            maxValueUnsigned <<= 1;
+                            maxValueUnsigned |= 0x01;
+                        }
+
+                        maxValueSigned = (Int64)(maxValueUnsigned >> 1);
+                        minValueSigned = ~maxValueSigned;
+                    }
+
+                    if (newScaledValue.HasValue)
+                    {
                         try
                         {
-                            if (ScaleMult.HasValue)
+                            double tempValue = newScaledValue.Value;
+                            if (ScaleDiv.HasValue)
                             {
-                                scaledValue *= ScaleMult.Value;
+                                tempValue *= ScaleDiv.Value;
                             }
                             if (ScaleOffset.HasValue)
                             {
-                                scaledValue += ScaleOffset.Value;
+                                tempValue -= ScaleOffset.Value;
                             }
-                            if (ScaleDiv.HasValue)
+                            if (ScaleMult.HasValue)
                             {
-                                scaledValue /= ScaleDiv.Value;
+                                tempValue /= ScaleMult.Value;
+                            }
+
+                            if ((DataTypeId & DataTypeMaskSigned) != 0)
+                            {
+                                if (tempValue > maxValueSigned)
+                                {
+                                    newValue = (UInt64)maxValueSigned;
+                                }
+                                else if (tempValue < minValueSigned)
+                                {
+                                    newValue = (UInt64) minValueSigned;
+                                }
+                                else
+                                {
+                                    Int64 valueSigned = (Int64)tempValue;
+                                    newValue = (UInt64)valueSigned;
+                                }
+                            }
+                            else
+                            {
+                                if (tempValue > maxValueUnsigned)
+                                {
+                                    newValue = maxValueUnsigned;
+                                }
+                                else if (tempValue < 0)
+                                {
+                                    newValue = 0;
+                                }
+                                else
+                                {
+                                    newValue = (UInt64)tempValue;
+                                }
                             }
                         }
                         catch (Exception)
                         {
                             // ignored
                         }
-
-                        if (dataType == DataType.HexScaled)
-                        {
-                            sb.Append($"{(UInt64)scaledValue:X}");
-                            break;
-                        }
-
-                        sb.Append(scaledValue.ToString($"F{NumberOfDigits ?? 0}"));
-                        break;
                     }
 
-                    case DataType.Binary1:
-                    case DataType.Binary2:
+                    if (newValue.HasValue)
                     {
-                        foreach (byte value in subData)
+                        if ((DataTypeId & DataTypeMaskSigned) != 0)
                         {
-                            if (sb.Length > 0)
+                            Int64 valueSigned = (Int64)newValue.Value;
+                            if (valueSigned > maxValueSigned)
                             {
-                                sb.Append(" ");
+                                newValue = (UInt64)maxValueSigned;
                             }
-                            sb.Append(Convert.ToString(value, 2).PadLeft(8, '0'));
+                            else if (valueSigned < minValueSigned)
+                            {
+                                newValue = (UInt64)minValueSigned;
+                            }
                         }
-                        break;
+                        else
+                        {
+                            if (newValue.Value > maxValueUnsigned)
+                            {
+                                newValue = maxValueUnsigned;
+                            }
+                        }
+
+                        newDataBytes = new byte[byteLength];
+                        UInt64 tempValue = newValue.Value;
+                        if ((DataTypeId & DataTypeMaskSwapped) != 0)
+                        {
+                            for (int i = 0; i < byteLength; i++)
+                            {
+                                newDataBytes[i] = (byte)tempValue;
+                                tempValue >>= 8;
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < byteLength; i++)
+                            {
+                                newDataBytes[byteLength - i - 1] = (byte)tempValue;
+                                tempValue >>= 8;
+                            }
+                        }
                     }
 
-                    case DataType.HexBytes:
-                        sb.Append(BitConverter.ToString(subData).Replace("-", " "));
-                        break;
-
-                    case DataType.FixedEncoding:
-                        return FixedEncoding.ToString(UdsReader, subData);
-
-                    case DataType.String:
-                        sb.Append(Encoding.GetString(subData));
-                        break;
-
-                    default:
-                        return string.Empty;
-                }
-
-                if (!string.IsNullOrEmpty(UnitText))
-                {
-                    if (sb.Length > 0)
+                    if (newDataBytes != null && newDataBytes.Length == byteLength)
                     {
-                        sb.Append(" ");
-                    }
-                    sb.Append(UnitText);
-                }
+                        if (bitOffset > 0 || (bitLength & 0x7) != 0)
+                        {
+                            byte[] subDataOld = new byte[byteLength];
+                            Array.Copy(data, byteOffset, subDataOld, 0, byteLength);
+                            BitArray bitArrayOld = new BitArray(subDataOld);
+                            BitArray bitArrayNew = new BitArray(newDataBytes);
+                            if (bitOffset + bitLength <= bitArrayOld.Length)
+                            {
+                                // insert new bit in the old data
+                                for (int i = 0; i < bitLength; i++)
+                                {
+                                    bitArrayOld[(int)(i + bitOffset)] = bitArrayNew[i];
+                                }
+                                bitArrayOld.CopyTo(newDataBytes, 0);
+                            }
+                        }
 
-                return sb.ToString();
+                        if (data.Length >= byteOffset + newDataBytes.Length)
+                        {
+                            dataNew = new byte[data.Length];
+                            Array.Copy(data, dataNew, data.Length);
+                            Array.Copy(newDataBytes, 0, dataNew, byteOffset, newDataBytes.Length);
+                        }
+                    }
+                    if (oldCulture != null)
+                    {
+                        CultureInfo.CurrentCulture = oldCulture;
+                    }
+                }
             }
         }
 
@@ -863,16 +1328,158 @@ namespace UdsFileReader
 
         public class ParseInfoMwb : ParseInfoBase
         {
-            public ParseInfoMwb(UInt32 serviceId, string[] lineArray, string[] nameArray, DataTypeEntry dataTypeEntry) : base(lineArray)
+            public ParseInfoMwb(UInt32 serviceId, string[] lineArray, UInt32 nameKey, string[] nameArray, DataTypeEntry dataTypeEntry) : base(lineArray)
             {
                 ServiceId = serviceId;
+                NameKey = nameKey;
                 NameArray = nameArray;
                 DataTypeEntry = dataTypeEntry;
+                if (nameArray != null)
+                {
+                    if (nameArray.Length >= 1)
+                    {
+                        Name = nameArray[0];
+                    }
+                    if (nameArray.Length >= 3)
+                    {
+                        if (UInt32.TryParse(nameArray[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 valueType))
+                        {
+                            DataIdType = valueType;
+                        }
+                        if (UInt32.TryParse(nameArray[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 valueId))
+                        {
+                            DataId = valueId;
+                        }
+                    }
+                }
+
+                StringBuilder sbIdName = new StringBuilder();
+                string namePart1 = GetDataIdName(NameKey, DataId, DataIdType);
+                if (!string.IsNullOrEmpty(namePart1))
+                {
+                    sbIdName.Append(namePart1);
+                    string namePart2 = GetDataIdName(DataTypeEntry.NameDetailKey, DataTypeEntry.DataDetailId, DataTypeEntry.DataDetailIdType);
+                    if (!string.IsNullOrEmpty(namePart2))
+                    {
+                        sbIdName.Append("-");
+                        sbIdName.Append(namePart2);
+                    }
+                }
+                DataIdString = sbIdName.ToString();
+
+                StringBuilder sbId = new StringBuilder();
+                sbId.Append(string.Format(CultureInfo.InvariantCulture, "{0}", ServiceId));
+                sbId.Append("-");
+                sbId.Append(DataIdString);
+                UniqueIdString = sbId.ToString();
+
+                StringBuilder sbIdOld = new StringBuilder();
+                sbIdOld.Append(string.Format(CultureInfo.InvariantCulture, "{0}", ServiceId));
+                if (DataId.HasValue)
+                {
+                    sbIdOld.Append("-");
+                    sbIdOld.Append(string.Format(CultureInfo.InvariantCulture, "{0}", DataId.Value));
+                    if (DataTypeEntry.DataDetailId.HasValue)
+                    {
+                        sbIdOld.Append("-");
+                        sbIdOld.Append(string.Format(CultureInfo.InvariantCulture, "{0}", DataTypeEntry.DataDetailId.Value));
+                    }
+                }
+                UniqueIdStringOld = sbIdOld.ToString();
             }
 
             public UInt32 ServiceId { get; }
+            public UInt32 NameKey { get; }
             public string[] NameArray { get; }
+            public string Name { get; }
+            public UInt32? DataId { get; }
+            public UInt32? DataIdType { get; }
             public DataTypeEntry DataTypeEntry { get; }
+            public string DataIdString { get; }
+            public string UniqueIdString { get; }
+            public string UniqueIdStringOld { get; }
+
+            static string GetDataIdName(UInt32? nameKey, UInt32? dataId, UInt32? dataIdType)
+            {
+                if (!nameKey.HasValue)
+                {
+                    return string.Empty;
+                }
+
+                UInt32 displayValue;
+                string prefix;
+                if (dataId.HasValue && dataIdType.HasValue)
+                {
+                    displayValue = dataId.Value;
+                    switch (dataIdType.Value)
+                    {
+                        case 1:
+                            prefix = "FSS";
+                            break;
+
+                        case 2:
+                            prefix = "IDE";
+                            break;
+
+                        case 3:
+                            prefix = "LTD";
+                            break;
+
+                        case 4:
+                            prefix = "LTE";
+                            break;
+
+                        case 5:
+                            prefix = "LTF";
+                            break;
+
+                        case 6:
+                            prefix = "LTG";
+                            break;
+
+                        case 7:
+                            prefix = "MAS";
+                            break;
+
+                        case 8:
+                            prefix = "SER";
+                            break;
+
+                        case 9:
+                            prefix = "SFT";
+                            break;
+
+                        case 10:
+                        case 11:
+                        case 12:
+                        case 13:
+                            prefix = string.Format(CultureInfo.InvariantCulture, "LR{0}", dataIdType.Value - 10);
+                            break;
+
+                        default:
+                            prefix = "UNK";
+                            break;
+                    }
+                }
+                else
+                {
+                    displayValue = nameKey.Value;
+                    prefix = "ENG";
+                }
+
+                return string.Format(CultureInfo.InvariantCulture, "{0}{1:00000}", prefix, displayValue & 0x1FFFF);
+            }
+        }
+
+        public class ParseInfoAdp : ParseInfoMwb
+        {
+            public ParseInfoAdp(UInt32 serviceId, UInt32? subItem, string[] lineArray, UInt32 nameKey, string[] nameArray, DataTypeEntry dataTypeEntry) :
+                base(serviceId, lineArray, nameKey, nameArray, dataTypeEntry)
+            {
+                SubItem = subItem;
+            }
+
+            public UInt32? SubItem { get; }
         }
 
         public class ParseInfoDtc : ParseInfoBase
@@ -893,9 +1500,36 @@ namespace UdsFileReader
             public string ErrorDetail { get; }
         }
 
+        public class ParseInfoSlv : ParseInfoBase
+        {
+            public ParseInfoSlv(string[] lineArray, UInt32? tableKey, List<SlaveInfo> slaveList) : base(lineArray)
+            {
+                TableKey = tableKey;
+                SlaveList = slaveList;
+            }
+
+            public UInt32? TableKey { get; }
+            public List<SlaveInfo> SlaveList { get; }
+
+            public class SlaveInfo
+            {
+                public SlaveInfo(UInt32 minAddr, UInt32 maxAddr, string name)
+                {
+                    MinAddr = minAddr;
+                    MaxAddr = maxAddr;
+                    Name = name;
+                }
+
+                public UInt32 MinAddr { get; }
+                public UInt32 MaxAddr { get; }
+                public string Name { get; }
+            }
+
+        }
+
         public class SegmentInfo
         {
-            public SegmentInfo(SegmentType segmentType, string segmentName, string fileName)
+            public SegmentInfo(SegmentType segmentType, string segmentName, string fileName = null)
             {
                 SegmentType = segmentType;
                 SegmentName = segmentName;
@@ -905,6 +1539,7 @@ namespace UdsFileReader
             public SegmentType SegmentType { get; }
             public string SegmentName { get; }
             public string FileName { get; }
+            public bool Ignored { set; get; }
             public List<string[]> LineList { set; get; }
         }
 
@@ -917,19 +1552,242 @@ namespace UdsFileReader
             new SegmentInfo(SegmentType.Mwb, "MWB", "RM"),
             new SegmentInfo(SegmentType.Sot, "SOT", "RS"),
             new SegmentInfo(SegmentType.Xpl, "XPL", "RX"),
+            new SegmentInfo(SegmentType.Slv, "SLV"),
         };
 
-        // simplified form without date handling
-        private static readonly Dictionary<string, string> ChassisMapFixed = new Dictionary<string, string>()
+        public class ChassisInfo
         {
-            { "1K", "VW36" },
-            { "6R", "VW25" },
-            { "3C", "VW46" },
-            { "1T", "VW36" },
-            { "6J", "SE25" },
-            { "5N", "VW36" },
-            { "AX", "VW36" },
-            { "KE", "SE25" },
+            public delegate string NameConverterDelegate(UdsReader udsReader, FileNameResolver fileNameResolver);
+
+            public ChassisInfo(string chassisName)
+            {
+                ChassisName = chassisName;
+            }
+
+            public ChassisInfo(NameConverterDelegate converterFunc)
+            {
+                ConverterFunc = converterFunc;
+            }
+
+            public string ChassisName { get; }
+            public NameConverterDelegate ConverterFunc { get; }
+        }
+
+        static string ChassisName1K(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2009)
+                {
+                    oldVer = true;
+                }
+                else if (fileNameResolver.ModelYear == 2009)
+                {
+                    long serNum = fileNameResolver.SerialNumber;
+                    if (serNum >= 0)
+                    {
+                        if (serNum < 199999)
+                        {
+                            oldVer = true;
+                        }
+                        else if (serNum > 400000 && serNum <= 700000)
+                        {
+                            oldVer = true;
+                        }
+                        else if (serNum > 800000 && serNum <= 900000)
+                        {
+                            oldVer = true;
+                        }
+                    }
+                }
+            }
+
+            return oldVer ? "VW35" : "VW36";
+        }
+
+        static string ChassisName6R(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2015)
+                {
+                    oldVer = true;
+                }
+                else if (fileNameResolver.ModelYear == 2015)
+                {
+                    if (string.Compare(fileNameResolver.Manufacturer, "LSV", StringComparison.OrdinalIgnoreCase) == 0)
+                    {
+                        oldVer = true;
+                    }
+                }
+            }
+            else
+            {
+                oldVer = true;
+            }
+
+            return oldVer ? "VW25" : "VW26";
+        }
+
+        static string ChassisName3C(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2015)
+                {
+                    oldVer = true;
+                }
+                else if (fileNameResolver.ModelYear == 2016 &&
+                        string.Compare(fileNameResolver.Manufacturer, "LSV", StringComparison.OrdinalIgnoreCase) == 0)
+                {
+                    oldVer = true;
+                }
+                else if (fileNameResolver.ModelYear == 2015)
+                {
+                    if (fileNameResolver.SerialNumber >= 0 && fileNameResolver.SerialNumber < 200000)
+                    {
+                        oldVer = true;
+                    }
+                }
+            }
+            else
+            {
+                oldVer = true;
+            }
+
+            return oldVer ? "VW46" : "VW48";
+        }
+
+        static string ChassisName1T(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2016)
+                {
+                    oldVer = true;
+                }
+                else
+                {
+                    if (string.Compare(fileNameResolver.Manufacturer, "LSV", StringComparison.OrdinalIgnoreCase) == 0)
+                    {
+                        oldVer = true;
+                    }
+                }
+            }
+            else
+            {
+                oldVer = true;
+            }
+
+            return oldVer ? "VW36" : "VW37";
+        }
+
+        static string ChassisName6J(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2016)
+                {
+                    oldVer = true;
+                }
+            }
+            else
+            {
+                oldVer = true;
+            }
+
+            return oldVer ? "SE26" : "SE27";
+        }
+
+        static string ChassisName5N(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2016)
+                {
+                    oldVer = true;
+                }
+                else if (fileNameResolver.ModelYear == 2016)
+                {
+                    if (string.Compare(fileNameResolver.Manufacturer, "WVG", StringComparison.OrdinalIgnoreCase) != 0)
+                    {
+                        oldVer = true;
+                    }
+                    else
+                    {
+                        char plant = char.ToUpperInvariant(fileNameResolver.AssemblyPlant);
+                        long serNum = fileNameResolver.SerialNumber;
+                        if (serNum >= 0)
+                        {
+                            if (!((plant == 'J' || plant == 'W') && (serNum >= 300000 && serNum < 500000) || serNum > 800000))
+                            {
+                                oldVer = true;
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                oldVer = true;
+            }
+
+            return oldVer ? "VW36" : "VW37";
+        }
+
+        // ReSharper disable once InconsistentNaming
+        static string ChassisNameAX(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2017)
+                {
+                    oldVer = true;
+                }
+                else
+                {
+                    if (string.Compare(fileNameResolver.Manufacturer, "3VV", StringComparison.OrdinalIgnoreCase) != 0)
+                    {
+                        oldVer = true;
+                    }
+                }
+            }
+
+            return oldVer ? "VW36" : "VW37";
+        }
+
+        // ReSharper disable once InconsistentNaming
+        static string ChassisNameKE(UdsReader udsReader, FileNameResolver fileNameResolver)
+        {
+            bool oldVer = false;
+            if (fileNameResolver.ModelYear >= 0)
+            {
+                if (fileNameResolver.ModelYear < 2016)
+                {
+                    oldVer = true;
+                }
+            }
+
+            return oldVer ? "SE25" : "SE26";
+        }
+
+        private static readonly Dictionary<string, ChassisInfo> ChassisMapFixed = new Dictionary<string, ChassisInfo>()
+        {
+            { "1K", new ChassisInfo(ChassisName1K) },
+            { "6R", new ChassisInfo(ChassisName6R) },
+            { "3C", new ChassisInfo(ChassisName3C) },
+            { "1T", new ChassisInfo(ChassisName1T) },
+            { "6J", new ChassisInfo(ChassisName6J) },
+            { "5N", new ChassisInfo(ChassisName5N) },
+            { "AX", new ChassisInfo(ChassisNameAX) },
+            { "KE", new ChassisInfo(ChassisNameKE) },
         };
 
         private static readonly HashSet<string> ChassisInvalid = new HashSet<string>()
@@ -943,9 +1801,15 @@ namespace UdsFileReader
         private Dictionary<UInt32, FixedEncodingEntry> _fixedEncodingMap;
         private ILookup<UInt32, string[]> _ttdopLookup;
         private ILookup<UInt32, string[]> _muxLookup;
-        private Dictionary<string, string> _chassisMap;
+        private Dictionary<string, ChassisInfo> _chassisMap;
 
         public DataReader DataReader { get; private set; }
+        public string LanguageDir { get; set; }
+
+        public UdsReader()
+        {
+            LanguageDir = string.Empty;
+        }
 
         private static readonly Dictionary<byte, string> Type28Dict = new Dictionary<byte, string>()
         {
@@ -2857,7 +3721,7 @@ namespace UdsFileReader
                 }
 
                 string udsDir = Path.Combine(rootDir, UdsDir);
-                List<string[]> redirList = ExtractFileSegment(new List<string> {Path.Combine(udsDir, "ReDir" + FileExtension)}, "DIR");
+                List<string[]> redirList = ExtractFileSegment(new List<string> {Path.Combine(udsDir, "redir" + FileExtension)}, "DIR");
                 if (redirList == null)
                 {
                     return false;
@@ -2870,16 +3734,16 @@ namespace UdsFileReader
                     {
                         return false;
                     }
-                    _redirMap.Add(redirArray[1].ToUpperInvariant(), redirArray[2]);
+                    _redirMap.Add(redirArray[1].ToLowerInvariant(), redirArray[2]);
                 }
 
-                _textMap = CreateTextDict(udsDir, "TTText*" + FileExtension, "TXT");
+                _textMap = CreateTextDict(udsDir, "tttext*" + FileExtension, "TXT");
                 if (_textMap == null)
                 {
                     return false;
                 }
 
-                _unitMap = CreateTextDict(udsDir, "Unit*" + FileExtension, "UNT");
+                _unitMap = CreateTextDict(udsDir, "unit*" + FileExtension, "UNT");
                 if (_unitMap == null)
                 {
                     return false;
@@ -2894,21 +3758,21 @@ namespace UdsFileReader
                     }
                 }
 
-                List<string[]> ttdopList = ExtractFileSegment(new List<string> { Path.Combine(udsDir, "TTDOP" + FileExtension) }, "DOP");
+                List<string[]> ttdopList = ExtractFileSegment(new List<string> { Path.Combine(udsDir, "ttdop" + FileExtension) }, "DOP");
                 if (ttdopList == null)
                 {
                     return false;
                 }
                 _ttdopLookup = ttdopList.ToLookup(item => UInt32.Parse(item[0]));
 
-                List<string[]> muxList = ExtractFileSegment(new List<string> { Path.Combine(udsDir, "MUX" + FileExtension) }, "MUX");
+                List<string[]> muxList = ExtractFileSegment(new List<string> { Path.Combine(udsDir, "mux" + FileExtension) }, "MUX");
                 if (muxList == null)
                 {
                     return false;
                 }
                 _muxLookup = muxList.ToLookup(item => UInt32.Parse(item[0]));
 
-                _chassisMap = CreateChassisDict(Path.Combine(udsDir, "Chassis" + DataReader.FileExtension));
+                _chassisMap = CreateChassisDict(Path.Combine(udsDir, "chassis" + DataReader.FileExtension));
                 if (_chassisMap == null)
                 {
                     return false;
@@ -2916,14 +3780,22 @@ namespace UdsFileReader
 
                 foreach (SegmentInfo segmentInfo in SegmentInfos)
                 {
+                    segmentInfo.Ignored = false;
+                    if (string.IsNullOrEmpty(segmentInfo.FileName))
+                    {
+                        continue;
+                    }
+
                     if (requiredSegments != null)
                     {
                         if (!requiredSegments.Contains(segmentInfo.SegmentType))
                         {
+                            segmentInfo.Ignored = true;
                             continue;
                         }
                     }
-                    string fileName = Path.Combine(udsDir, Path.ChangeExtension(segmentInfo.FileName, FileExtension));
+
+                    string fileName = Path.Combine(udsDir, Path.ChangeExtension(segmentInfo.FileName ?? string.Empty, FileExtension));
                     List<string[]> lineList = ExtractFileSegment(new List<string> {fileName}, segmentInfo.SegmentName);
                     if (lineList == null)
                     {
@@ -2989,10 +3861,549 @@ namespace UdsFileReader
             return null;
         }
 
+        public List<ParseInfoAdp> GetAdpParseInfoList(string fileName)
+        {
+            try
+            {
+                if (!_adpParseInfoDict.TryGetValue(fileName, out List<ParseInfoAdp> adpSegmentList))
+                {
+                    List<string> includeFiles = FileNameResolver.GetAllFiles(fileName);
+                    if (includeFiles == null)
+                    {
+                        return null;
+                    }
+                    List<ParseInfoBase> adpSegmentListExtract = ExtractFileSegment(includeFiles, SegmentType.Adp);
+                    if (adpSegmentListExtract == null)
+                    {
+                        return null;
+                    }
+                    adpSegmentList = new List<ParseInfoAdp>();
+                    foreach (ParseInfoBase parseInfo in adpSegmentListExtract)
+                    {
+                        if (parseInfo is ParseInfoAdp parseInfoAdp)
+                        {
+                            adpSegmentList.Add(parseInfoAdp);
+                        }
+                    }
+                    _adpParseInfoDict.Add(fileName, adpSegmentList);
+                }
+
+                return adpSegmentList;
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+
+            return null;
+        }
+
+        public ParseInfoMwb GetMwbParseInfo(string fileName, string uniqueIdString)
+        {
+            try
+            {
+                if (!_mwbParseInfoDict.TryGetValue(fileName, out Dictionary<string, ParseInfoMwb> mbwSegmentDict))
+                {
+                    List<string> includeFiles = FileNameResolver.GetAllFiles(fileName);
+                    if (includeFiles == null)
+                    {
+                        return null;
+                    }
+                    List<ParseInfoBase> mwbSegmentList = ExtractFileSegment(includeFiles, SegmentType.Mwb);
+                    if (mwbSegmentList == null)
+                    {
+                        return null;
+                    }
+
+                    mbwSegmentDict = new Dictionary<string, ParseInfoMwb>();
+                    foreach (ParseInfoBase parseInfo in mwbSegmentList)
+                    {
+                        if (parseInfo is ParseInfoMwb parseInfoMwb)
+                        {
+                            if (!mbwSegmentDict.ContainsKey(parseInfoMwb.UniqueIdString))
+                            {
+                                mbwSegmentDict.Add(parseInfoMwb.UniqueIdString, parseInfoMwb);
+                            }
+                            if (!mbwSegmentDict.ContainsKey(parseInfoMwb.UniqueIdStringOld))
+                            {
+                                mbwSegmentDict.Add(parseInfoMwb.UniqueIdStringOld, parseInfoMwb);
+                            }
+
+                            string[] uniqueParts1 = parseInfoMwb.UniqueIdString.Split('-');
+                            if (uniqueParts1.Length > 0 && !string.IsNullOrEmpty(uniqueParts1[0]))
+                            {
+                                if (!mbwSegmentDict.ContainsKey(uniqueParts1[0]))
+                                {
+                                    mbwSegmentDict.Add(uniqueParts1[0], parseInfoMwb);
+                                }
+                            }
+                        }
+                    }
+
+                    _mwbParseInfoDict.Add(fileName, mbwSegmentDict);
+                }
+
+                if (mbwSegmentDict.TryGetValue(uniqueIdString, out ParseInfoMwb parseInfoMwbMatch))
+                {
+                    return parseInfoMwbMatch;
+                }
+
+                string[] uniqueParts2 = uniqueIdString.Split('-');   // try with service id only
+                if (uniqueParts2.Length > 0 && !string.IsNullOrEmpty(uniqueParts2[0]))
+                {
+                    if (mbwSegmentDict.TryGetValue(uniqueParts2[0], out parseInfoMwbMatch))
+                    {
+                        return parseInfoMwbMatch;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+
+            return null;
+        }
+
+        public ParseInfoDtc GetDtcParseInfo(string fileName, uint errorCode, uint detailCode)
+        {
+            try
+            {
+                if (!_dtcParseInfoDict.TryGetValue(fileName, out Dictionary<uint, ParseInfoDtc> dtcSegmentDict))
+                {
+                    List<string> includeFiles = FileNameResolver.GetAllFiles(fileName);
+                    if (includeFiles == null)
+                    {
+                        return null;
+                    }
+                    List<ParseInfoBase> dtcSegmentList = ExtractFileSegment(includeFiles, SegmentType.Dtc);
+                    if (dtcSegmentList == null)
+                    {
+                        return null;
+                    }
+
+                    dtcSegmentDict = new Dictionary<uint, ParseInfoDtc>();
+                    foreach (ParseInfoBase parseInfo in dtcSegmentList)
+                    {
+                        if (parseInfo is ParseInfoDtc parseInfoDtc)
+                        {
+                            uint addKey = parseInfoDtc.ErrorCode << 8;
+                            if (!dtcSegmentDict.ContainsKey(addKey))
+                            {
+                                dtcSegmentDict.Add(addKey, parseInfoDtc);
+                            }
+
+                            if (parseInfoDtc.DetailCode.HasValue && parseInfoDtc.DetailCode.Value != 0)
+                            {
+                                addKey |= parseInfoDtc.DetailCode.Value & 0xFF;
+                                if (!dtcSegmentDict.ContainsKey(addKey))
+                                {
+                                    dtcSegmentDict.Add(addKey, parseInfoDtc);
+                                }
+                            }
+                        }
+                    }
+
+                    _dtcParseInfoDict.Add(fileName, dtcSegmentDict);
+                }
+
+                uint matchKey = errorCode << 8;
+                uint matchKeyDetail = matchKey | (detailCode & 0xFF);
+                if (dtcSegmentDict.TryGetValue(matchKeyDetail, out ParseInfoDtc parseInfoDtcMatch))
+                {
+                    return parseInfoDtcMatch;
+                }
+                if (dtcSegmentDict.TryGetValue(matchKey, out parseInfoDtcMatch))
+                {
+                    return parseInfoDtcMatch;
+                }
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+
+            return null;
+        }
+
+        public ParseInfoSlv.SlaveInfo GetSlvInfo(string fileName, uint slvAddr)
+        {
+            try
+            {
+                if (!_slvParseInfoDict.TryGetValue(fileName, out List<ParseInfoSlv> slvSegmentListMatch))
+                {
+                    List<string> includeFiles = FileNameResolver.GetAllFiles(fileName);
+                    if (includeFiles == null)
+                    {
+                        return null;
+                    }
+                    List<ParseInfoBase> slvSegmentList = ExtractFileSegment(includeFiles, SegmentType.Slv);
+                    if (slvSegmentList == null)
+                    {
+                        return null;
+                    }
+
+                    slvSegmentListMatch = new List<ParseInfoSlv>();
+                    foreach (ParseInfoBase parseInfo in slvSegmentList)
+                    {
+                        if (parseInfo is ParseInfoSlv parseInfoSlv)
+                        {
+                            if (parseInfoSlv.SlaveList != null)
+                            {
+                                slvSegmentListMatch.Add(parseInfoSlv);
+                            }
+                        }
+                    }
+
+                    _slvParseInfoDict.Add(fileName, slvSegmentListMatch);
+                }
+
+                if (_slvParseInfoDict.TryGetValue(fileName, out List<ParseInfoSlv> parseInfoSlvMatch))
+                {
+                    foreach (ParseInfoSlv parseInfoSlv in parseInfoSlvMatch)
+                    {
+                        if (parseInfoSlv.SlaveList != null)
+                        {
+                            foreach (ParseInfoSlv.SlaveInfo slaveInfo in parseInfoSlv.SlaveList)
+                            {
+                                if (slaveInfo.MinAddr >= slvAddr && slaveInfo.MaxAddr <= slvAddr)
+                                {
+                                    return slaveInfo;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+
+            return null;
+        }
+
+        public List<string> ErrorCodeToString(string fileName, uint errorCode, uint detailCode)
+        {
+            UdsReader udsReader = this;
+            List<string> resultList = new List<string>();
+            ParseInfoDtc parseInfoDtc = GetDtcParseInfo(fileName, errorCode, detailCode);
+            if (parseInfoDtc != null)
+            {
+                if (!string.IsNullOrWhiteSpace(parseInfoDtc.PcodeText))
+                {
+                    resultList.Add(string.Format(CultureInfo.InvariantCulture, "{0} - {1:000}", parseInfoDtc.PcodeText, detailCode));
+                }
+                if (!string.IsNullOrWhiteSpace(parseInfoDtc.ErrorText))
+                {
+                    resultList.Add(parseInfoDtc.ErrorText);
+                }
+                if (!string.IsNullOrWhiteSpace(parseInfoDtc.ErrorDetail))
+                {
+                    resultList.Add(parseInfoDtc.ErrorDetail);
+                }
+
+                if ((detailCode & 0x80) != 0x00)
+                {
+                    resultList.Add((GetTextMapText(udsReader, 066900) ?? string.Empty) + " " + (GetTextMapText(udsReader, 000085) ?? string.Empty));   // Warnleuchte EIN
+                }
+                if ((detailCode & 0x01) == 0x00)
+                {
+                    resultList.Add(GetTextMapText(udsReader, 002693) ?? string.Empty);   // Sporadisch
+                }
+                if ((detailCode & 0x08) != 0x00)
+                {
+                    resultList.Add(GetTextMapText(udsReader, 022457) ?? string.Empty);   // Bestätigt
+                }
+                else
+                {
+                    resultList.Add(GetTextMapText(udsReader, 023505) ?? string.Empty);   // Unbestätigt
+                }
+#if false   // bad translation
+                if ((detailCode & 0x10) == 0x00)
+                {
+                    resultList.Add(GetTextMapText(udsReader, 170986) ?? string.Empty);   // geprüft seit letzter Löschung
+                }
+                else
+                {
+                    resultList.Add(GetTextMapText(udsReader, 151076) ?? string.Empty);   // ungeprüft seit letzter Löschung
+                }
+#endif
+            }
+
+            return resultList;
+        }
+
+        public List<string> ErrorDetailBlockToString(string fileName, byte[] data)
+        {
+            UdsReader udsReader = this;
+            List<string> resultList = new List<string>();
+            if (data.Length < 1)
+            {
+                return null;
+            }
+
+            if (data[0] != 0x59)
+            {
+                return null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            UInt32 value;
+            if (data.Length >= 6 + 1)
+            {
+                value = data[6];
+                if (value != 0xFF)
+                {
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 018478) ?? string.Empty); // Fehlerstatus
+                    sb.Append(": ");
+                    sb.Append(Convert.ToString(value, 2).PadLeft(8, '0'));
+                    resultList.Add(sb.ToString());
+                }
+            }
+
+            if (data.Length >= 7 + 1)
+            {
+                value = data[7];
+                if (value != 0xFF)
+                {
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 016693) ?? string.Empty); // Fehlerpriorität
+                    sb.Append(": ");
+                    sb.Append($"{value & 0x0F:0}");
+                    resultList.Add(sb.ToString());
+                }
+            }
+
+            if (data.Length >= 8 + 1)
+            {
+                value = data[8];
+                if (value != 0xFF)
+                {
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 061517) ?? string.Empty); // Fehlerhäufigkeit
+                    sb.Append(": ");
+                    sb.Append($"{value:0}");
+                    resultList.Add(sb.ToString());
+                }
+            }
+
+            if (data.Length >= 10 + 1)
+            {
+                value = data[10];
+                if (value != 0xFF)
+                {
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 099026) ?? string.Empty); // Verlernzähler
+                    sb.Append(": ");
+                    sb.Append($"{value:0}");
+                    resultList.Add(sb.ToString());
+                }
+            }
+
+            if (data.Length >= 11 + 3)
+            {
+                value = (UInt32) ((data[11] << 16) | (data[12] << 8) | data[13]);
+                if (value != 0xFFFFF)
+                {
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 018858) ?? string.Empty); // Kilometerstand
+                    sb.Append(": ");
+                    sb.Append($"{value:0}");
+                    sb.Append(" ");
+                    sb.Append(GetUnitMapText(udsReader, 000108) ?? string.Empty); // km
+                    resultList.Add(sb.ToString());
+                }
+            }
+
+            if (data.Length >= 15 + 5)
+            {
+                // date time
+                UInt64 timeValue = 0;
+                for (int i = 0; i < 5; i++)
+                {
+                    timeValue <<= 8;
+                    timeValue += data[15 + i];
+                }
+
+                if (timeValue != 0 && timeValue != 0x1FFFFFFFF)
+                {
+                    UInt64 tempValue = timeValue;
+                    UInt64 sec = tempValue & 0x3F;
+                    tempValue >>= 6;
+                    UInt64 min = tempValue & 0x3F;
+                    tempValue >>= 6;
+                    UInt64 hour = tempValue & 0x1F;
+                    tempValue >>= 5;
+                    UInt64 day = tempValue & 0x1F;
+                    tempValue >>= 5;
+                    UInt64 month = tempValue & 0x0F;
+                    tempValue >>= 4;
+                    UInt64 year = tempValue & 0x7F;
+
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 098044) ?? string.Empty); // Datum
+                    sb.Append(": ");
+                    sb.Append(string.Format(CultureInfo.InvariantCulture, "{0:00}.{1:00}.{2:00}", year + 2000, month,
+                        day));
+                    resultList.Add(sb.ToString());
+
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 099068) ?? string.Empty); // Zeit
+                    sb.Append(": ");
+                    sb.Append(string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}:{2:00}", hour, min, sec));
+                    resultList.Add(sb.ToString());
+                }
+            }
+#if false
+            if (data.Length >= 20 + 1)
+            {
+                value = data[20];
+                if (value != 0xFF)
+                {
+                    sb.Clear();
+                    sb.Append(GetTextMapText(udsReader, 098291) ?? string.Empty); // Spannung Klemme 30
+                    sb.Append(": ");
+                    double valueDouble = value * 0.2;
+                    sb.Append($"{valueDouble:0.0} ");
+                    sb.Append(GetUnitMapText(udsReader, 9) ?? string.Empty);    // V
+                    resultList.Add(sb.ToString());
+                }
+            }
+#endif
+            List<string> resultListMwb = ErrorMbwDetailsToString(fileName, data);
+            if (resultListMwb != null && resultListMwb.Count > 0)
+            {
+                resultList.AddRange(resultListMwb);
+            }
+
+            if (resultList.Count > 0)
+            {
+                sb.Clear();
+                sb.Append(GetTextMapText(udsReader, 003356) ?? string.Empty);  // Umgebungsbedingungen
+                sb.Append(":");
+                resultList.Insert(0, sb.ToString());
+            }
+            return resultList;
+        }
+
+        private List<string> ErrorMbwDetailsToString(string fileName, byte[] data)
+        {
+            int offset = 21;
+            if (data.Length <= offset)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(fileName))
+            {
+                return null;
+            }
+
+            if (!_dtcMwbParseInfoDict.TryGetValue(fileName, out List<ParseInfoBase> mwbSegmentList))
+            {
+                List<string> includeFiles = FileNameResolver.GetAllFiles(fileName);
+                if (includeFiles == null)
+                {
+                    return null;
+                }
+                mwbSegmentList = ExtractFileSegment(includeFiles, SegmentType.Mwb);
+                if (mwbSegmentList == null)
+                {
+                    return null;
+                }
+
+                _dtcMwbParseInfoDict.Add(fileName, mwbSegmentList);
+            }
+
+            List<string> resultList = new List<string>();
+            while (data.Length - offset > 0)
+            {
+                List<string> resultListSub = ErrorMbwDetailToString(mwbSegmentList, data, ref offset);
+                if (resultListSub == null)
+                {
+                    return null;
+                }
+                resultList.AddRange(resultListSub);
+            }
+
+            return resultList;
+        }
+
+        private List<string> ErrorMbwDetailToString(List<ParseInfoBase> mwbSegmentList, byte[] data, ref int offset)
+        {
+            List<string> resultList = new List<string>();
+            if (data.Length - offset < 3)
+            {
+                return null;
+            }
+
+            UInt32 serviceId = (UInt32) (data[offset + 0] << 8) | data[offset + 1];
+            if (serviceId == 0)
+            {
+                return null;
+            }
+            List<ParseInfoMwb> parseInfoList = new List<ParseInfoMwb>();
+            foreach (ParseInfoBase parseInfo in mwbSegmentList)
+            {
+                if (parseInfo is ParseInfoMwb parseInfoMwb)
+                {
+                    if (parseInfoMwb.ServiceId == serviceId)
+                    {
+                        parseInfoList.Add(parseInfoMwb);
+                    }
+                }
+            }
+
+            if (parseInfoList.Count == 0)
+            {
+                return null;
+            }
+
+            int telLength = 0;
+            foreach (ParseInfoMwb parseInfoMwb in parseInfoList)
+            {
+                byte[] subData = new byte[data.Length - offset - 2];
+                Array.Copy(data, offset + 2, subData, 0, subData.Length);
+                string dataString = parseInfoMwb.DataTypeEntry.ToString(subData);
+                if (!string.IsNullOrEmpty(dataString))
+                {
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append(parseInfoMwb.Name);
+                    if (!string.IsNullOrEmpty(parseInfoMwb.DataTypeEntry.NameDetail))
+                    {
+                        sb.Append("-");
+                        sb.Append(parseInfoMwb.DataTypeEntry.NameDetail);
+                    }
+                    sb.Append(": ");
+                    sb.Append(dataString);
+                    resultList.Add(sb.ToString());
+                }
+
+                if (!parseInfoMwb.DataTypeEntry.MinTelLength.HasValue)
+                {
+                    return null;
+                }
+                if (telLength < parseInfoMwb.DataTypeEntry.MinTelLength.Value)
+                {
+                    telLength = (int) parseInfoMwb.DataTypeEntry.MinTelLength.Value;
+                }
+            }
+
+            if (telLength <= 0)
+            {
+                return null;
+            }
+            offset += telLength + 2;
+
+            return resultList;
+        }
+
         public List<ParseInfoBase> ExtractFileSegment(List<string> fileList, SegmentType segmentType)
         {
             SegmentInfo segmentInfoSel = GetSegmentInfo(segmentType);
-            if (segmentInfoSel?.LineList == null)
+            if (segmentInfoSel == null || segmentInfoSel.Ignored)
             {
                 return null;
             }
@@ -3016,23 +4427,80 @@ namespace UdsFileReader
                     return null;
                 }
 
-                if (value < 1 || value > segmentInfoSel.LineList.Count)
+                string[] lineArray = null;
+                if (segmentInfoSel.LineList != null)
                 {
-                    if (segmentType == SegmentType.Dtc)
+                    if (value < 1 || value > segmentInfoSel.LineList.Count)
                     {
-                        continue;
+                        if (segmentType == SegmentType.Dtc)
+                        {
+                            continue;
+                        }
+                        return null;
                     }
-                    return null;
+                    lineArray = segmentInfoSel.LineList[(int)value - 1];
                 }
-
-                string[] lineArray = segmentInfoSel.LineList[(int) value - 1];
 
                 ParseInfoBase parseInfo;
                 switch (segmentType)
                 {
+                    case SegmentType.Adp:
+                    {
+                        if (lineArray == null)
+                        {
+                            return null;
+                        }
+                        if (lineArray.Length == 2)
+                        {
+                            continue;
+                        }
+                        if (lineArray.Length < 15)
+                        {
+                            return null;
+                        }
+
+                        if (!UInt32.TryParse(lineArray[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 nameKey))
+                        {
+                            return null;
+                        }
+
+                        if (!_textMap.TryGetValue(nameKey, out string[] nameArray))
+                        {
+                            return null;
+                        }
+
+                        if (!UInt32.TryParse(lineArray[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 serviceId))
+                        {
+                            return null;
+                        }
+
+                        UInt32? subItem = null;
+                        if (lineArray[1].Length > 0)
+                        {
+                            if (!UInt32.TryParse(lineArray[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 item))
+                            {
+                                return null;
+                            }
+
+                            subItem = item;
+                        }
+
+                        DataTypeEntry dataTypeEntry;
+                        try
+                        {
+                            dataTypeEntry = new DataTypeEntry(this, lineArray, 3);
+                        }
+                        catch (Exception)
+                        {
+                            return null;
+                        }
+                        parseInfo = new ParseInfoAdp(serviceId, subItem, lineArray, nameKey, nameArray, dataTypeEntry);
+                        break;
+                    }
+
                     case SegmentType.Mwb:
                     {
-                        if (lineArray.Length < 14)
+                        if (lineArray == null || lineArray.Length < 14)
                         {
                             return null;
                         }
@@ -3061,13 +4529,13 @@ namespace UdsFileReader
                             return null;
                         }
 
-                        parseInfo = new ParseInfoMwb(serviceId, lineArray, nameArray, dataTypeEntry);
+                        parseInfo = new ParseInfoMwb(serviceId, lineArray, nameKey, nameArray, dataTypeEntry);
                         break;
                     }
 
                     case SegmentType.Dtc:
                     {
-                        if (lineArray.Length < 8)
+                        if (lineArray == null || lineArray.Length < 8)
                         {
                             return null;
                         }
@@ -3144,6 +4612,50 @@ namespace UdsFileReader
                         break;
                     }
 
+                    case SegmentType.Slv:
+                    {
+                        List<ParseInfoSlv.SlaveInfo> slaveList = null;
+                        UInt32? tableKey = null;
+                        if (value != 0)
+                        {
+                            tableKey = value;
+                            slaveList = new List<ParseInfoSlv.SlaveInfo>();
+                            IEnumerable<string[]> bitList = _ttdopLookup[tableKey.Value];
+                            foreach (string[] ttdopArray in bitList)
+                            {
+                                if (ttdopArray.Length >= 4)
+                                {
+                                    if (!UInt32.TryParse(ttdopArray[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 minAddr))
+                                    {
+                                        return null;
+                                    }
+                                    if (!UInt32.TryParse(ttdopArray[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 maxAddr))
+                                    {
+                                        return null;
+                                    }
+                                    if (!UInt32.TryParse(ttdopArray[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out UInt32 nameKey))
+                                    {
+                                        return null;
+                                    }
+                                    if (!_textMap.TryGetValue(nameKey, out string[] nameArray))
+                                    {
+                                        return null;
+                                    }
+
+                                    string slvName = string.Empty;
+                                    if (nameArray.Length >= 1)
+                                    {
+                                        slvName = nameArray[0];
+                                    }
+                                    slaveList.Add(new ParseInfoSlv.SlaveInfo(minAddr, maxAddr, slvName));
+                                }
+                            }
+                        }
+
+                        parseInfo = new ParseInfoSlv(line, tableKey, slaveList);
+                        break;
+                    }
+
                     default:
                         parseInfo = new ParseInfoBase(lineArray);
                         break;
@@ -3192,7 +4704,7 @@ namespace UdsFileReader
             }
         }
 
-        public static Dictionary<string, string> CreateChassisDict(string fileName)
+        public static Dictionary<string, ChassisInfo> CreateChassisDict(string fileName)
         {
             try
             {
@@ -3202,7 +4714,7 @@ namespace UdsFileReader
                     return null;
                 }
 
-                Dictionary<string, string> dict = new Dictionary<string, string>(ChassisMapFixed);
+                Dictionary<string, ChassisInfo> dict = new Dictionary<string, ChassisInfo> (ChassisMapFixed);
                 foreach (string[] textArray in textList)
                 {
                     if (textArray.Length != 2)
@@ -3217,19 +4729,15 @@ namespace UdsFileReader
 
                     string key = textArray[0];
                     string value = textArray[1];
-                    if (dict.TryGetValue(key, out string dictValue))
+                    if (dict.TryGetValue(key, out ChassisInfo chassisInfo))
                     {
-                        if (string.Compare(dictValue, value, StringComparison.Ordinal) != 0)
-                        {
-                            // inconistent data base entry, ignore it!
 #if DEBUG
-                            System.Diagnostics.Debug.WriteLine("Inconistent chassis for key: " + key);
+                        System.Diagnostics.Debug.WriteLine("Multiple chassis entry for key: " + key);
 #endif
-                        }
                     }
                     else
                     {
-                        dict.Add(key, value);
+                        dict.Add(key, new ChassisInfo(value));
                     }
                 }
 
@@ -3270,6 +4778,7 @@ namespace UdsFileReader
                 try
                 {
                     Stream zipStream = null;
+                    Encoding encoding = DataReader.GetEncodingForFileName(fileName);
                     string fileNameBase = Path.GetFileName(fileName);
                     FileStream fs = File.OpenRead(fileName);
                     zf = new ZipFile(fs)
@@ -3295,7 +4804,7 @@ namespace UdsFileReader
                     }
                     try
                     {
-                        using (StreamReader sr = new StreamReader(zipStream, Encoding))
+                        using (StreamReader sr = new StreamReader(zipStream, encoding))
                         {
                             bool inSegment = false;
                             for (; ; )
@@ -3362,7 +4871,7 @@ namespace UdsFileReader
             string fullName = Path.ChangeExtension(fileName, FileExtension);
             if (!File.Exists(fullName))
             {
-                string key = Path.GetFileNameWithoutExtension(fileName)?.ToUpperInvariant();
+                string key = Path.GetFileNameWithoutExtension(fileName)?.ToLowerInvariant();
                 if (key == null)
                 {
                     return null;
@@ -3383,7 +4892,7 @@ namespace UdsFileReader
                 {
                     return null;
                 }
-                fullName = Path.Combine(dirName, fullName);
+                fullName = Path.Combine(dirName, fullName.ToLowerInvariant());
 
                 if (!File.Exists(fullName))
                 {
@@ -3428,7 +4937,7 @@ namespace UdsFileReader
                         string file = line[1];
                         if (!string.IsNullOrWhiteSpace(file))
                         {
-                            string fileNameInc = Path.Combine(dir, Path.ChangeExtension(file, FileExtension));
+                            string fileNameInc = Path.Combine(dir, Path.ChangeExtension(file.ToLowerInvariant(), FileExtension));
                             if (File.Exists(fileNameInc) && !includeFiles.Contains(fileNameInc))
                             {
                                 includeFiles.Add(fileNameInc);

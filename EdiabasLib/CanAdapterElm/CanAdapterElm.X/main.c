@@ -16,6 +16,9 @@
 #if _HTC_EDITION_ != 2
 #error Compiler is not PRO mode, generated code will be too slow
 #endif
+#if __XC8_VERSION != 1330
+#error Timing is optimized for XC8 1.33
+#endif
 
 // #pragma config statements should precede project file includes.
 // Use project enums instead of #define for ON and OFF.
@@ -86,7 +89,7 @@
 #define DEBUG_PIN           0   // enable debug pin
 #define ID_LOCATION         0x200000    // location of ID memory
 
-#define ADAPTER_VERSION     0x000A
+#define ADAPTER_VERSION     0x000D
 
 #if ADAPTER_TYPE == 0x02
 #define REQUIRES_BT_REC_TIMOUT
@@ -139,7 +142,7 @@
 #endif
 #endif
 
-#define MIN_BAUD    4000
+#define MIN_BAUD    980
 #define MAX_BAUD    25000
 
 #define IGNITION_STATE()    IGNITION
@@ -468,7 +471,15 @@ void kline_baud_cfg()
             baud_rate = 9600;
         }
         T2CONbits.TMR2ON = 0;
-        T2CONbits.T2CKPS = 1;       // prescaler 4
+        if (baud_rate < 4000)
+        {   // min baud rate 980
+            T2CONbits.T2CKPS = 2;       // prescaler 16
+            baud_rate <<= 2;
+        }
+        else
+        {   // min baud rate 3921
+            T2CONbits.T2CKPS = 1;       // prescaler 4
+        }
         T2CONbits.T2OUTPS = 0x0;    // postscaler 1
         PR2 = 16000000ul / 16 / baud_rate;
         kline_bit_delay = 0;
@@ -2319,11 +2330,19 @@ void can_sender(bool new_can_msg)
     {
         idle_counter = 0;
         uint8_t *data_offset = &temp_buffer[3];
-        uint8_t data_len = temp_buffer[0] & 0x3F;
+        uint16_t data_len = temp_buffer[0] & 0x3F;
         if (data_len == 0)
         {
-            data_len = temp_buffer[3];
-            data_offset = &temp_buffer[4];
+            if (temp_buffer[3] == 0)
+            {
+                data_len = ((uint16_t) temp_buffer[4] << 8) + temp_buffer[5];
+                data_offset = &temp_buffer[6];
+            }
+            else
+            {
+                data_len = temp_buffer[3];
+                data_offset = &temp_buffer[4];
+            }
         }
         uint8_t target_address = temp_buffer[1];
         uint8_t source_address = temp_buffer[2];
@@ -2347,7 +2366,7 @@ void can_sender(bool new_can_msg)
             can_out_msg.sid = 0x600 | source_address;    // source address
             can_out_msg.dlc.bits.count = 8;
             can_out_msg.data[0] = target_address;
-            can_out_msg.data[1] = 0x10 | ((data_len >> 8) & 0xFF);      // first frame + length
+            can_out_msg.data[1] = 0x10 | ((data_len >> 8) & 0x0F);      // first frame + length
             can_out_msg.data[2] = data_len;
             uint8_t len = 5;
             memcpy(can_out_msg.data + 3, data_offset, len);
@@ -2411,7 +2430,7 @@ void can_sender(bool new_can_msg)
         can_out_msg.dlc.bits.count = 8;
         can_out_msg.data[0] = target_address;
         can_out_msg.data[1] = 0x20 | (can_send_block_count & 0x0F);      // consecutive frame + block count
-        uint8_t len = data_len - can_send_pos;
+        uint16_t len = data_len - can_send_pos;
         if (len > 6)
         {
             len = 6;
@@ -2506,11 +2525,15 @@ void can_receiver(bool new_can_msg)
                     can_rec_source_addr = can_in_msg.sid & 0xFF;
                     can_rec_target_addr = can_in_msg.data[0];
                     can_rec_data_len = (((uint16_t) can_in_msg.data[1] & 0x0F) << 8) + can_in_msg.data[2];
-                    if (can_rec_data_len > 0xFF)
+                    if ((can_rec_data_len + 7) > sizeof(send_buffer))
                     {   // too long
                         break;
                     }
-                    if (can_rec_data_len > 0x3F)
+                    if (can_rec_data_len > 0xFF)
+                    {
+                        can_rec_buffer_offset = temp_buffer + 6;
+                    }
+                    else if (can_rec_data_len > 0x3F)
                     {
                         can_rec_buffer_offset = temp_buffer + 4;
                     }
@@ -2539,7 +2562,7 @@ void can_receiver(bool new_can_msg)
                         di();
                         temp_len = send_len;
                         ei();
-                        if ((sizeof(send_buffer) - temp_len) >= (can_rec_data_len + 5))
+                        if ((sizeof(send_buffer) - temp_len) >= (can_rec_data_len + 7))
                         {
                             break;
                         }
@@ -2596,7 +2619,17 @@ void can_receiver(bool new_can_msg)
         {
             uint16_t len;
             // create BMW-FAST telegram
-            if (can_rec_data_len > 0x3F)
+            if (can_rec_data_len > 0xFF)
+            {
+                temp_buffer[0] = 0x80;
+                temp_buffer[1] = can_rec_target_addr;
+                temp_buffer[2] = can_rec_source_addr;
+                temp_buffer[3] = 0x00;
+                temp_buffer[4] = (can_rec_data_len >> 8);
+                temp_buffer[5] = can_rec_data_len;
+                len = can_rec_data_len + 6;
+            }
+            else if (can_rec_data_len > 0x3F)
             {
                 temp_buffer[0] = 0x80;
                 temp_buffer[1] = can_rec_target_addr;
@@ -2716,7 +2749,7 @@ void can_isotp_sender(bool new_can_msg)
             memset(&can_out_msg, 0x00, sizeof(can_out_msg));
             can_out_msg.sid = can_cfg_isotp_txid;
             can_out_msg.dlc.bits.count = 8;
-            can_out_msg.data[0] = 0x10 | ((data_len >> 8) & 0xFF);      // first frame + length
+            can_out_msg.data[0] = 0x10 | ((data_len >> 8) & 0x0F);      // first frame + length
             can_out_msg.data[1] = data_len;
             uint8_t len = 6;
             memcpy(can_out_msg.data + 2, data_offset, len);
@@ -2777,7 +2810,7 @@ void can_isotp_sender(bool new_can_msg)
         can_out_msg.sid = can_cfg_isotp_txid;
         can_out_msg.dlc.bits.count = 8;
         can_out_msg.data[0] = 0x20 | (can_send_block_count & 0x0F);      // consecutive frame + block count
-        uint8_t len = data_len - can_send_pos;
+        uint16_t len = data_len - can_send_pos;
         if (len > 7)
         {
             len = 7;
@@ -3503,11 +3536,15 @@ void main(void)
     LED_OBD_RX = 1;
     LED_OBD_TX = 1;
     // LED as output
-    //TRISBbits.TRISB4 = 0; // used by bootloader
+    // ignore bootloader pin
+#if ADAPTER_TYPE == 0x06
+    TRISBbits.TRISB4 = 0;
+#else
 #if defined(ALLOW_FACTORY_RESET)
     TRISBbits.TRISB5 = 1;
 #else
     TRISBbits.TRISB5 = 0;
+#endif
 #endif
     TRISBbits.TRISB6 = 0;
     TRISBbits.TRISB7 = 0;
@@ -3924,14 +3961,35 @@ void interrupt high_priority high_isr (void)
                         else
                         {
                             // standard mode
-                            tel_len = rec_buffer[0] & 0x3F;
-                            if (tel_len == 0)
+                            if (rec_len >= 4)
                             {
-                                tel_len = rec_buffer[3] + 5;
+                                tel_len = rec_buffer[0] & 0x3F;
+                                if (tel_len == 0)
+                                {
+                                    if (rec_buffer[3] == 0)
+                                    {   // 2 byte length
+                                        if (rec_len >= 6)
+                                        {
+                                            tel_len = (((uint16_t) rec_buffer[4]) << 8) + rec_buffer[5] + 7;
+                                        }
+                                        else
+                                        {
+                                            tel_len = 0;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        tel_len = rec_buffer[3] + 5;
+                                    }
+                                }
+                                else
+                                {
+                                    tel_len += 4;
+                                }
                             }
                             else
                             {
-                                tel_len += 4;
+                                tel_len = 0;
                             }
                         }
                         if (tel_len > sizeof(rec_buffer))

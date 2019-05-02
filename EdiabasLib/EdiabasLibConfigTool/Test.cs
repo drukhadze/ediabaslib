@@ -21,6 +21,8 @@ namespace EdiabasLibConfigTool
     {
         private const string ElmIp = @"192.168.0.10";
         private const int ElmPort = 35000;
+        private const string EspLinkIp = @"192.168.4.1";
+        private const int EspLinkPort = 23;
         private readonly FormMain _form;
         private BluetoothClient _btClient;
         private NetworkStream _dataStream;
@@ -91,7 +93,14 @@ namespace EdiabasLibConfigTool
                 AuthRequest authRequest = new AuthRequest(ap);
                 if (authRequest.IsPasswordRequired)
                 {
-                    authRequest.Password = _form.WifiPassword;
+                    if (ap.Name.StartsWith(Patch.AdapterSsidEnetLink, StringComparison.OrdinalIgnoreCase))
+                    {
+                        authRequest.Password = Patch.PassordWifiEnetLink;
+                    }
+                    else
+                    {
+                        authRequest.Password = _form.WifiPassword;
+                    }
                 }
                 ap.ConnectAsync(authRequest, true, success =>
                 {
@@ -118,21 +127,24 @@ namespace EdiabasLibConfigTool
                     WlanConnectionAttributes conn = wlanIface.CurrentConnection;
                     string ssidString = Encoding.ASCII.GetString(conn.wlanAssociationAttributes.dot11Ssid.SSID).TrimEnd('\0');
                     string ipAddr = string.Empty;
-                    bool isElm = string.Compare(ssidString, Patch.AdapterSsidEnet, StringComparison.OrdinalIgnoreCase) != 0;
-                    if (!isElm)
+                    bool isEnet = string.Compare(ssidString, Patch.AdapterSsidEnet, StringComparison.OrdinalIgnoreCase) == 0;
+                    bool isEnetLink = ssidString.StartsWith(Patch.AdapterSsidEnetLink, StringComparison.OrdinalIgnoreCase);
+
+                    IPInterfaceProperties ipProp = wlanIface.NetworkInterface.GetIPProperties();
+                    if (ipProp == null)
                     {
-                        IPInterfaceProperties ipProp = wlanIface.NetworkInterface.GetIPProperties();
-                        if (ipProp == null)
-                        {
-                            _form.UpdateStatusText(Resources.Strings.ConnectionFailed);
-                            return false;
-                        }
-                        ipAddr = (from addr in ipProp.DhcpServerAddresses where addr.AddressFamily == AddressFamily.InterNetwork select addr.ToString()).FirstOrDefault();
-                        if (string.IsNullOrEmpty(ipAddr))
-                        {
-                            _form.UpdateStatusText(Resources.Strings.ConnectionFailed);
-                            return false;
-                        }
+                        _form.UpdateStatusText(Resources.Strings.ConnectionFailed);
+                        return false;
+                    }
+                    ipAddr = (from addr in ipProp.DhcpServerAddresses where addr.AddressFamily == AddressFamily.InterNetwork select addr.ToString()).FirstOrDefault();
+                    if (string.IsNullOrEmpty(ipAddr))
+                    {
+                        _form.UpdateStatusText(Resources.Strings.ConnectionFailed);
+                        return false;
+                    }
+
+                    if (isEnet || isEnetLink)
+                    {
                         if (configure)
                         {
                             Process.Start(string.Format("http://{0}", ipAddr));
@@ -148,9 +160,9 @@ namespace EdiabasLibConfigTool
                         {
                             Thread.CurrentThread.CurrentCulture = cultureInfo;
                             Thread.CurrentThread.CurrentUICulture = cultureInfo;
-                            if (isElm)
+                            if (isEnet || isEnetLink)
                             {
-                                TestOk = RunWifiTestElm(configure, out bool configRequired);
+                                TestOk = RunWifiTestEnetRetry(ipAddr, out bool configRequired);
                                 if (TestOk && configRequired)
                                 {
                                     ConfigPossible = true;
@@ -158,13 +170,12 @@ namespace EdiabasLibConfigTool
                             }
                             else
                             {
-                                TestOk = RunWifiTestEnetRetry(ipAddr);
-                                if (TestOk)
+                                TestOk = RunWifiTestElm(ipAddr, configure, out bool configRequired);
+                                if (TestOk && configRequired)
                                 {
                                     ConfigPossible = true;
                                 }
                             }
-
                         }
                         finally
                         {
@@ -217,11 +228,12 @@ namespace EdiabasLibConfigTool
             return true;
         }
 
-        private bool RunWifiTestEnetRetry(string ipAddr)
+        private bool RunWifiTestEnetRetry(string ipAddr, out bool configRequired)
         {
+            configRequired = false;
             for (int i = 0; i < 2; i++)
             {
-                if (RunWifiTestEnet(ipAddr))
+                if (RunWifiTestEnet(ipAddr, out configRequired))
                 {
                     return true;
                 }
@@ -229,8 +241,9 @@ namespace EdiabasLibConfigTool
             return false;
         }
 
-        private bool RunWifiTestEnet(string ipAddr)
+        private bool RunWifiTestEnet(string ipAddr, out bool configRequired)
         {
+            configRequired = false;
             _form.UpdateStatusText(Resources.Strings.Connecting);
 
             StringBuilder sr = new StringBuilder();
@@ -238,10 +251,30 @@ namespace EdiabasLibConfigTool
             StreamReader reader = null;
             try
             {
-                WebRequest request = WebRequest.Create(string.Format("http://{0}", ipAddr));
-                response = request.GetResponse();
+                try
+                {
+                    WebRequest request = WebRequest.Create(string.Format("http://{0}", ipAddr));
+                    response = request.GetResponse();
+                }
+                catch (WebException ex)
+                {
+                    if (ex.Status == WebExceptionStatus.ProtocolError)
+                    {
+                        if (ex.Response is HttpWebResponse webResponse)
+                        {
+                            if (webResponse.StatusCode == HttpStatusCode.Unauthorized)
+                            {
+                                sr.Append(Resources.Strings.Connected);
+                                sr.Append("\r\n");
+                                sr.Append(Resources.Strings.TestOk);
+                                _form.UpdateStatusText(sr.ToString());
+                                return true;
+                            }
+                        }
+                    }
+                }
 
-                Stream dataStream = response.GetResponseStream();
+                Stream dataStream = response?.GetResponseStream();
                 if (dataStream == null)
                 {
                     _form.UpdateStatusText(Resources.Strings.ConnectionFailed);
@@ -273,19 +306,35 @@ namespace EdiabasLibConfigTool
             sr.Append("\r\n");
             sr.Append(Resources.Strings.TestOk);
             _form.UpdateStatusText(sr.ToString());
+            configRequired = true;
             return true;
         }
 
-        private bool RunWifiTestElm(bool configure, out bool configRequired)
+        private bool RunWifiTestElm(string ipAddress, bool configure, out bool configRequired)
         {
             configRequired = false;
             _form.UpdateStatusText(Resources.Strings.Connecting);
+
+            int port = -1;
+            if (string.Compare(ipAddress, ElmIp, StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                port = ElmPort;
+            }
+            else if (string.Compare(ipAddress, EspLinkIp, StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                port = EspLinkPort;
+            }
+
+            if (port < 0)
+            {
+                _form.UpdateStatusText(Resources.Strings.ConnectionFailed);
+            }
 
             try
             {
                 using (TcpClient tcpClient = new TcpClient())
                 {
-                    IPEndPoint ipTcp = new IPEndPoint(IPAddress.Parse(ElmIp), ElmPort);
+                    IPEndPoint ipTcp = new IPEndPoint(IPAddress.Parse(ipAddress), port);
                     tcpClient.Connect(ipTcp);
                     _dataStream = tcpClient.GetStream();
                     return RunBtTest(configure, out configRequired);
@@ -319,7 +368,7 @@ namespace EdiabasLibConfigTool
             sr.Append(Resources.Strings.FirmwareVersion);
             sr.Append(string.Format(" {0}.{1}", firmware[2], firmware[3]));
             int version = (firmware[2] << 8) + firmware[3];
-            if (version < 8)
+            if (version < 13)
             {
                 sr.Append("\r\n");
                 sr.Append(Resources.Strings.FirmwareTooOld);

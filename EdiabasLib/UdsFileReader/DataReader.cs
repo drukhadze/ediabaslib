@@ -12,16 +12,18 @@ namespace UdsFileReader
 {
     public class DataReader
     {
-        private static readonly Encoding Encoding = Encoding.GetEncoding(1252);
+        public static readonly Encoding EncodingLatin1 = Encoding.GetEncoding(1252);
+        public static readonly Encoding EncodingCyrillic = Encoding.GetEncoding(1251);
         public const string FileExtension = ".ldat";
         public const string CodeFileExtension = ".cdat";
-        public const string DataDir = "Labels";
+        public const string DataDir = "labels";
 
         public enum ErrorType
         {
             Iso9141,
             Kwp2000,
             Sae,
+            Uds,
         }
 
         public Dictionary<UInt32, string> CodeMap { get; private set; }
@@ -31,6 +33,7 @@ namespace UdsFileReader
             Measurement,
             Basic,
             Adaption,
+            Login,
             Settings,
             Coding,
             LongCoding,
@@ -38,24 +41,47 @@ namespace UdsFileReader
 
         public class FileNameResolver
         {
-            public FileNameResolver(DataReader dataReader, string partNumber, int address)
+            public FileNameResolver(DataReader dataReader, string partNumber, string hwPartNumber, string partNumberSubSys, int address, int indexSubSys) :
+                this(dataReader, partNumber, hwPartNumber, address)
+            {
+                PartNumberSubSys = partNumberSubSys;
+                IndexSubSys = indexSubSys;
+                _fullNameSubSys = ConvertPartNumber(PartNumberSubSys, out _baseNameSubSys);
+            }
+
+            public FileNameResolver(DataReader dataReader, string partNumber, string hwPartNumber, int address)
             {
                 DataReader = dataReader;
                 PartNumber = partNumber;
+                HwPartNumber = hwPartNumber;
                 Address = address;
 
-                if (PartNumber.Length > 9)
-                {
-                    string part1 = PartNumber.Substring(0, 3);
-                    string part2 = PartNumber.Substring(3, 3);
-                    string part3 = PartNumber.Substring(6, 3);
-                    string suffix = PartNumber.Substring(9);
-                    _baseName = part1 + "-" + part2 + "-" + part3;
-                    _fullName = _baseName + "-" + suffix;
-                }
+                _fullName = ConvertPartNumber(PartNumber, out _baseName);
+                _fullNameHw = ConvertPartNumber(hwPartNumber, out _baseNameHw);
             }
 
-            public string GetFileName(string dir)
+            private static string ConvertPartNumber(string partNumber, out string baseName)
+            {
+                string fullName = string.Empty;
+                baseName = string.Empty;
+                if (!string.IsNullOrEmpty(partNumber) && partNumber.Length >= 9)
+                {
+                    string part1 = partNumber.Substring(0, 3);
+                    string part2 = partNumber.Substring(3, 3);
+                    string part3 = partNumber.Substring(6, 3);
+                    baseName = part1 + "-" + part2 + "-" + part3;
+                    fullName = baseName;
+                    if (partNumber.Length > 9)
+                    {
+                        string suffix = partNumber.Substring(9);
+                        fullName = baseName + "-" + suffix;
+                    }
+                }
+
+                return fullName;
+            }
+
+            public string GetFileName(string rootDir)
             {
                 try
                 {
@@ -64,9 +90,16 @@ namespace UdsFileReader
                         return null;
                     }
 
-                    List<string> dirList = GetDirList(dir);
-                    string fileName = ResolveFileName(dirList);
+                    string dataDir = Path.Combine(rootDir, DataDir);
+                    List<string> dirList = GetDirList(dataDir);
+                    string fileName = ResolveFileName(dirList, out bool redirectFile);
                     if (string.IsNullOrEmpty(fileName))
+                    {
+                        return null;
+                    }
+
+                    string baseFileName = Path.GetFileNameWithoutExtension(fileName);
+                    if (string.IsNullOrEmpty(baseFileName))
                     {
                         return null;
                     }
@@ -81,41 +114,65 @@ namespace UdsFileReader
                             {
                                 continue;
                             }
+                            bool matched = false;
 
-                            for (int i = 1; i < redirects.Length; i++)
+                            if (redirectFile)
                             {
-                                string redirect = redirects[i].Trim();
-                                bool matched = false;
-                                if (redirect.Length > 12)
-                                {   // min 1 char suffix
-                                    string regString = WildCardToRegular(redirect);
-                                    if (Regex.IsMatch(_fullName, regString, RegexOptions.IgnoreCase))
+                                string fullName = _fullName;
+                                if (redirects.Length >= 3)
+                                {
+                                    string redirectSource = redirects[2].Trim();
+                                    if (string.Compare(redirectSource, "HW", StringComparison.OrdinalIgnoreCase) == 0)
                                     {
-                                        matched = true;
+                                        fullName = _fullNameHw;
+                                    }
+                                    else if (string.Compare(redirectSource, "SL", StringComparison.OrdinalIgnoreCase) == 0)
+                                    {
+                                        fullName = _fullNameSubSys;
                                     }
                                 }
-                                else
+
+                                if (string.IsNullOrEmpty(fullName))
                                 {
+                                    continue;
+                                }
+
+                                string redirect = redirects[1].Trim();
+                                string regString = WildCardToRegular(redirect);
+                                if (Regex.IsMatch(fullName, regString, RegexOptions.IgnoreCase))
+                                {
+                                    matched = true;
+                                }
+                            }
+                            else
+                            {
+                                for (int i = 1; i < redirects.Length; i++)
+                                {
+                                    string redirect = redirects[i].Trim();
                                     string fullRedirect = _baseName + redirect;
                                     if (string.Compare(_fullName, fullRedirect, StringComparison.OrdinalIgnoreCase) == 0)
                                     {
                                         matched = true;
                                     }
                                 }
-
-                                if (matched)
+                            }
+                            if (matched)
+                            {
+                                foreach (string subDir in dirList)
                                 {
-                                    foreach (string subDir in dirList)
+                                    string targetFileName = Path.Combine(subDir, targetFile.ToLowerInvariant());
+                                    if (File.Exists(targetFileName))
                                     {
-                                        string targetFileName = Path.Combine(subDir, targetFile);
-                                        if (File.Exists(targetFileName))
-                                        {
-                                            return targetFileName;
-                                        }
+                                        return targetFileName;
                                     }
                                 }
                             }
                         }
+                    }
+
+                    if (redirectFile)
+                    {
+                        return null;    // no redirect found
                     }
 
                     return fileName;
@@ -126,35 +183,54 @@ namespace UdsFileReader
                 }
             }
 
-            private string ResolveFileName(List<string> dirList)
+            private string ResolveFileName(List<string> dirList, out bool redirectFile)
             {
+                redirectFile = false;
                 try
                 {
-                    foreach (string subDir in dirList)
+                    string partNumber;
+                    if (!IndexSubSys.HasValue)
                     {
-                        string fileName = Path.Combine(subDir, _fullName + FileExtension);
-                        if (File.Exists(fileName))
+                        partNumber = PartNumber;
+                        foreach (string subDir in dirList)
                         {
-                            return fileName;
-                        }
+                            string fileName = Path.Combine(subDir, _fullName.ToLowerInvariant() + FileExtension);
+                            if (File.Exists(fileName))
+                            {
+                                return fileName;
+                            }
 
-                        fileName = Path.Combine(subDir, _baseName + FileExtension);
-                        if (File.Exists(fileName))
-                        {
-                            return fileName;
+                            fileName = Path.Combine(subDir, _baseName.ToLowerInvariant() + FileExtension);
+                            if (File.Exists(fileName))
+                            {
+                                return fileName;
+                            }
                         }
                     }
-
-                    foreach (string subDir in dirList)
+                    else
                     {
-                        string part1 = PartNumber.Substring(0, 2);
-                        string part2 = string.Format(CultureInfo.InvariantCulture, "{0:00}", Address);
-                        string baseName = part1 + "-" + part2;
+                        partNumber = PartNumberSubSys;
+                    }
 
-                        string fileName = Path.Combine(subDir, baseName + FileExtension);
-                        if (File.Exists(fileName))
+                    if (!string.IsNullOrEmpty(partNumber) && partNumber.Length >= 2)
+                    {
+                        foreach (string subDir in dirList)
                         {
-                            return fileName;
+                            string part1 = partNumber.Substring(0, 2);
+                            string part2 = string.Format(CultureInfo.InvariantCulture, "{0:X02}", Address);
+                            string baseNameTest = part1 + "-" + part2;
+                            if (IndexSubSys.HasValue)
+                            {
+                                string part3 = string.Format(CultureInfo.InvariantCulture, "{0:X02}", IndexSubSys.Value + 1);
+                                baseNameTest += "-" + part3;
+                            }
+
+                            string fileName = Path.Combine(subDir, baseNameTest.ToLowerInvariant() + FileExtension);
+                            if (File.Exists(fileName))
+                            {
+                                redirectFile = true;
+                                return fileName;
+                            }
                         }
                     }
                 }
@@ -171,7 +247,7 @@ namespace UdsFileReader
                 try
                 {
                     List<string> dirList = new List<string>();
-                    string[] dirs = Directory.GetDirectories(dir);
+                    string[] dirs = Directory.GetDirectories(dir, "*", SearchOption.TopDirectoryOnly);
                     if (dirs.Length > 0)
                     {
                         dirList.AddRange(dirs);
@@ -218,10 +294,17 @@ namespace UdsFileReader
 
             public DataReader DataReader { get; }
             public string PartNumber { get; }
+            public string HwPartNumber { get; }
+            public string PartNumberSubSys { get; }
             public int Address { get; }
+            public int? IndexSubSys { get; }
 
             private readonly string _fullName;
             private readonly string _baseName;
+            private readonly string _fullNameHw;
+            private readonly string _baseNameHw;
+            private readonly string _fullNameSubSys;
+            private readonly string _baseNameSubSys;
         }
 
         public List<string> ErrorCodeToString(uint errorCode, uint errorDetail, ErrorType errorType, UdsReader udsReader = null)
@@ -443,7 +526,7 @@ namespace UdsFileReader
                 sb.Clear();
                 sb.Append(UdsReader.GetTextMapText(udsReader, 016693) ?? string.Empty); // Fehlerpriorität
                 sb.Append(": ");
-                sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}", value & 0x0F));
+                sb.Append($"{value & 0x0F:0}");
                 resultList.Add(sb.ToString());
             }
 
@@ -453,7 +536,7 @@ namespace UdsFileReader
                 sb.Clear();
                 sb.Append(UdsReader.GetTextMapText(udsReader, 061517) ?? string.Empty); // Fehlerhäufigkeit
                 sb.Append(": ");
-                sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}", value));
+                sb.Append($"{value:0}");
                 resultList.Add(sb.ToString());
             }
 
@@ -463,7 +546,7 @@ namespace UdsFileReader
                 sb.Clear();
                 sb.Append(UdsReader.GetTextMapText(udsReader, 099026) ?? string.Empty); // Verlernzähler
                 sb.Append(": ");
-                sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}", value));
+                sb.Append($"{value:0}");
                 resultList.Add(sb.ToString());
             }
 
@@ -473,7 +556,7 @@ namespace UdsFileReader
                 sb.Clear();
                 sb.Append(UdsReader.GetTextMapText(udsReader, 018858) ?? string.Empty); // Kilometerstand
                 sb.Append(": ");
-                sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}", value));
+                sb.Append($"{value:0}");
                 sb.Append(" ");
                 sb.Append(UdsReader.GetUnitMapText(udsReader, 000108) ?? string.Empty); // km
                 resultList.Add(sb.ToString());
@@ -544,7 +627,7 @@ namespace UdsFileReader
                             sb.Append(" ");
                             sb.Append(UdsReader.GetTextMapText(udsReader, 047622) ?? string.Empty);
                             sb.Append(": ");
-                            sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}", timeValue));
+                            sb.Append($"{timeValue:0}");
                             resultList.Add(sb.ToString());
                         }
                     }
@@ -555,7 +638,7 @@ namespace UdsFileReader
 
         public static string PcodeToString(uint pcodeNum)
         {
-            return PcodeToString(pcodeNum, out uint convertedValue);
+            return PcodeToString(pcodeNum, out _);
         }
 
         public static string PcodeToString(uint pcodeNum, out uint convertedValue)
@@ -648,9 +731,97 @@ namespace UdsFileReader
             return string.Format(CultureInfo.InvariantCulture, "{0}{1:X04}", keyLetter, pcodeNum & 0x3FFF);
         }
 
+        public static int GetModelYear(string vin)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(vin) || vin.Length < 10)
+                {
+                    return -1;
+                }
+
+                char yearCode = vin.ToUpperInvariant()[9];
+                if (Int32.TryParse(yearCode.ToString(), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out Int32 value))
+                {
+                    if (value >= 1 && value <= 0xF)
+                    {
+                        return value + 2000;
+                    }
+                }
+                if (yearCode >= 'G' && yearCode <= 'Z')
+                {
+                    if (yearCode > 'P')
+                    {
+                        if (yearCode >= 'R')
+                        {
+                            if (yearCode <= 'T')
+                            {
+                                return yearCode + 1942;
+                            }
+                            if (yearCode >= 'V')
+                            {
+                                return yearCode + 1941;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (yearCode == 'P')
+                        {
+                            return yearCode + 1943;
+                        }
+                        if (yearCode >= 'G')
+                        {
+                            if (yearCode <= 'H')
+                            {
+                                return yearCode + 1945;
+                            }
+                            if (yearCode >= 'J' && yearCode <= 'N')
+                            {
+                                return yearCode + 1944;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+
+            return -1;
+        }
+
+        public static Encoding GetEncodingForFileName(string fileName)
+        {
+            string baseFileName = Path.GetFileNameWithoutExtension(fileName) ?? string.Empty;
+            if (baseFileName.EndsWith("-rus", true, CultureInfo.InvariantCulture))
+            {
+                return EncodingCyrillic;
+            }
+
+            DirectoryInfo dirInfoParent = Directory.GetParent(fileName);
+            if (dirInfoParent != null)
+            {
+                if (string.Compare(dirInfoParent.Name, "rus", StringComparison.OrdinalIgnoreCase) == 0)
+                {
+                    return EncodingCyrillic;
+                }
+            }
+
+            return EncodingLatin1;
+        }
+
         private static string WildCardToRegular(string value)
         {
-            return "^" + Regex.Escape(value).Replace("\\?", ".") + "$";
+            string regEx = "^" + Regex.Escape(value).Replace("\\?", ".");
+            string regExTrim = regEx.TrimEnd('.');     // ? at the end is optional
+            if (regEx != regExTrim)
+            {
+                regEx = regExTrim + ".*";
+            }
+            regEx += "$";
+            return regEx;
         }
 
         public static string GetMd5Hash(string text)
@@ -677,6 +848,7 @@ namespace UdsFileReader
             try
             {
                 Stream zipStream = null;
+                Encoding encoding = GetEncodingForFileName(fileName);
                 string fileNameBase = Path.GetFileName(fileName);
                 FileStream fs = File.OpenRead(fileName);
                 zf = new ZipFile(fs)
@@ -704,7 +876,7 @@ namespace UdsFileReader
 
                 try
                 {
-                    using (StreamReader sr = new StreamReader(zipStream, Encoding))
+                    using (StreamReader sr = new StreamReader(zipStream, encoding))
                     {
                         for (;;)
                         {
@@ -773,12 +945,118 @@ namespace UdsFileReader
                 Value1 = value1;
                 Value2 = value2;
                 TextArray = textArray;
+                OrderIndex = 0;
+                if (Value1.HasValue)
+                {
+                    OrderIndex |= (UInt64) Value1.Value << 32;
+                }
+                if (Value2.HasValue)
+                {
+                    OrderIndex |= (UInt32)Value2.Value;
+                }
             }
 
             public DataType DataType { get; }
             public int? Value1 { get; }
             public int? Value2 { get; }
             public string[] TextArray { get; }
+            public UInt64 OrderIndex { get; protected set; }
+        }
+
+        public class DataInfoLongCoding : DataInfo
+        {
+            public DataInfoLongCoding(DataType dataType, int? value1, int? value2, string[] textArray) :
+                base(dataType, value1, value2, textArray)
+            {
+                if (textArray.Length >= 1)
+                {
+                    if (Int32.TryParse(textArray[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 value))
+                    {
+                        Byte = value;
+                    }
+                }
+
+                int textIndex = 2;
+                if (textArray.Length >= 2)
+                {
+                    string bitRange = textArray[1];
+                    if (bitRange.EndsWith("="))
+                    {
+                        bitRange = bitRange.Substring(0, bitRange.Length - 1);
+                        if (Int32.TryParse(bitRange, NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 value))
+                        {
+                            LineNumber = value;
+                        }
+                    }
+                    else
+                    {
+                        if (bitRange.Contains('~'))
+                        {
+                            string[] bitArray = textArray[1].Split('~');
+                            if (bitArray.Length == 2)
+                            {
+                                if (Int32.TryParse(bitArray[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 valueMin))
+                                {
+                                    if (Int32.TryParse(bitArray[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 valueMax))
+                                    {
+                                        BitMin = valueMin;
+                                        BitMax = valueMax;
+                                    }
+                                }
+                            }
+                            if (textArray.Length >= 3)
+                            {
+                                if (Int32.TryParse(textArray[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out Int32 value))
+                                {
+                                    BitValue = value;
+                                }
+                            }
+                            textIndex = 3;
+                        }
+                        else
+                        {
+                            if (Int32.TryParse(bitRange, NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 value))
+                            {
+                                Bit = value;
+                            }
+                        }
+                    }
+                    if (textArray.Length >= textIndex + 1)
+                    {
+                        Text = textArray[textIndex];
+                    }
+
+                    OrderIndex = 0;
+                    if (Byte.HasValue)
+                    {
+                        OrderIndex |= (UInt64)Byte.Value << 32;
+                    }
+                    if (LineNumber.HasValue)
+                    {
+                        OrderIndex |= (UInt32)LineNumber.Value;
+                    }
+                    else if (Bit.HasValue)
+                    {
+                        OrderIndex |= (UInt32)Bit.Value << 16;
+                    }
+                    else if (BitMin.HasValue)
+                    {
+                        OrderIndex |= (UInt32)BitMin.Value << 16;
+                        if (BitValue.HasValue)
+                        {
+                            OrderIndex |= (UInt32)BitValue.Value;
+                        }
+                    }
+                }
+            }
+
+            public int? Byte { get; }
+            public int? Bit { get; }
+            public int? BitMin { get; }
+            public int? BitMax { get; }
+            public int? BitValue { get; }
+            public int? LineNumber { get; }
+            public string Text { get; }
         }
 
         public List<DataInfo> ExtractDataType(string fileName, DataType dataType)
@@ -792,33 +1070,39 @@ namespace UdsFileReader
                     return null;
                 }
 
-                char? prefix = null;
+                string prefix = null;
                 int numberCount = 2;
                 int textOffset = 2;
                 switch (dataType)
                 {
                     case DataType.Adaption:
-                        prefix = 'A';
+                        prefix = "A";
                         break;
 
                     case DataType.Basic:
-                        prefix = 'B';
+                        prefix = "B";
+                        break;
+
+                    case DataType.Login:
+                        prefix = "L";
+                        textOffset = 1;
+                        numberCount = 1;
                         break;
 
                     case DataType.Settings:
-                        prefix = 'S';
+                        prefix = "S";
                         textOffset = 1;
                         numberCount = 1;
                         break;
 
                     case DataType.Coding:
-                        prefix = 'C';
+                        prefix = "C";
                         textOffset = 1;
                         numberCount = 1;
                         break;
 
                     case DataType.LongCoding:
-                        prefix = 'L';
+                        prefix = "LC";
                         textOffset = 1;
                         numberCount = 0;
                         break;
@@ -837,14 +1121,24 @@ namespace UdsFileReader
                         continue;
                     }
 
+                    bool longCoding = string.Compare(entry1, "LC", StringComparison.OrdinalIgnoreCase) == 0;
                     if (prefix != null)
                     {
-                        if (entry1[0] != prefix)
+                        if (longCoding)
                         {
-                            continue;
+                            if (string.Compare(entry1, prefix, StringComparison.OrdinalIgnoreCase) != 0)
+                            {
+                                continue;
+                            }
                         }
-
-                        entry1 = entry1.Substring(1);
+                        else
+                        {
+                            if (!entry1.StartsWith(prefix))
+                            {
+                                continue;
+                            }
+                            entry1 = entry1.Substring(prefix.Length);
+                        }
                     }
                     else
                     {
@@ -873,10 +1167,20 @@ namespace UdsFileReader
                     }
                     string[] textArray = lineArray.Skip(textOffset).ToArray();
 
-                    dataInfoList.Add(new DataInfo(dataType, value1, value2, textArray));
+                    switch (dataType)
+                    {
+                        case DataType.LongCoding:
+                            dataInfoList.Add(new DataInfoLongCoding(dataType, value1, value2, textArray));
+                            break;
+
+                        default:
+                            dataInfoList.Add(new DataInfo(dataType, value1, value2, textArray));
+                            break;
+                    }
                 }
 
-                return dataInfoList;
+                List<DataInfo> dataInfoListOrder = dataInfoList.OrderBy(x => x.OrderIndex).ToList();
+                return dataInfoListOrder;
             }
             catch (Exception)
             {
@@ -888,7 +1192,7 @@ namespace UdsFileReader
         {
             try
             {
-                string[] files = Directory.GetFiles(rootDir, "Code*" + CodeFileExtension, SearchOption.TopDirectoryOnly);
+                string[] files = Directory.GetFiles(rootDir, "code*" + CodeFileExtension, SearchOption.TopDirectoryOnly);
                 if (files.Length != 1)
                 {
                     return false;
